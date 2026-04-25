@@ -19,21 +19,30 @@ import 'core/utils/error_handler.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Setup global error handlers FIRST
   setupErrorHandlers();
 
-  await SystemChrome.setPreferredOrientations(
-      [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  try {
+    await SystemChrome.setPreferredOrientations(
+        [DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  } catch (_) {}
 
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor:          Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-  ));
+  try {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor:          Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+  } catch (_) {}
 
-  await DatabaseHelper.instance.database;
+  // Database — don't crash if fails
+  try {
+    await DatabaseHelper.instance.database;
+  } catch (_) {}
 
-  await Workmanager().initialize(workmanagerCallback, isInDebugMode: false);
-  await BackgroundService().registerAllTasks();
+  // Background tasks — non-critical
+  try {
+    await Workmanager().initialize(workmanagerCallback, isInDebugMode: false);
+    await BackgroundService().registerAllTasks();
+  } catch (_) {}
 
   runApp(const ProviderScope(child: HamadaApp()));
 }
@@ -75,10 +84,10 @@ class _HamadaAppState extends ConsumerState<HamadaApp>
   }
 
   Future<void> _startup() async {
-    await ref.read(aiServiceProvider).initialize();
-    ref.read(recurringServiceProvider).processDueTransactions().ignore();
-    ref.read(widgetServiceProvider).updateWidget().ignore();
-    await _checkBiometricLock();
+    try { await ref.read(aiServiceProvider).initialize(); } catch (_) {}
+    try { ref.read(recurringServiceProvider).processDueTransactions().ignore(); } catch (_) {}
+    try { ref.read(widgetServiceProvider).updateWidget().ignore(); } catch (_) {}
+    try { await _checkBiometricLock(); } catch (_) {}
   }
 
   Future<void> _checkBiometricLock() async {
@@ -87,14 +96,20 @@ class _HamadaAppState extends ConsumerState<HamadaApp>
   }
 
   void _checkLockOnResume() async {
-    final bio = ref.read(biometricServiceProvider);
-    if (await bio.isEnabled()) setState(() => _locked = true);
+    try {
+      final bio = ref.read(biometricServiceProvider);
+      if (await bio.isEnabled()) setState(() => _locked = true);
+    } catch (_) {}
   }
 
   Future<void> _tryBiometric() async {
-    final bio = ref.read(biometricServiceProvider);
-    final ok  = await bio.authenticate();
-    if (ok) setState(() => _locked = false);
+    try {
+      final bio = ref.read(biometricServiceProvider);
+      final ok  = await bio.authenticate();
+      if (ok) setState(() => _locked = false);
+    } catch (_) {
+      setState(() => _locked = false);
+    }
   }
 
   @override
@@ -113,7 +128,6 @@ class _HamadaAppState extends ConsumerState<HamadaApp>
         builder: (context, child) => Directionality(
           textDirection: TextDirection.rtl,
           child: Column(children: [
-            // Offline banner
             connectivity.whenOrNull(
               data: (s) => s == ConnectivityStatus.offline
                   ? const ConnectivityBanner()
