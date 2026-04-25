@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:logger/logger.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
