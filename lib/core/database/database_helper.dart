@@ -3,7 +3,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:logger/logger.dart';
 
-const int _kDbVersion = 2;
+const int _kDbVersion = 3;
 const String _kDbName = 'hamada_ai.db';
 
 abstract class Tables {
@@ -83,6 +83,10 @@ class DatabaseHelper {
       try { await _createFinancialGoals(db); } catch (_) {}
       try { await _createRecurringTx(db); } catch (_) {}
       try { await db.execute('CREATE INDEX IF NOT EXISTS idx_recurring_next_due ON ${Tables.recurringTx}(next_due)'); } catch (_) {}
+    }
+    if (oldV < 3) {
+      // Add app_settings table for API key storage
+      try { await _createSettings(db); } catch (_) {}
     }
   }
 

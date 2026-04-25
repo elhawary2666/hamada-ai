@@ -129,6 +129,10 @@ class AiService {
   Future<void> initialize() async {
     try {
       final sqlDb = await db.database;
+      // Ensure table exists even if migration was missed
+      await sqlDb.execute(
+        'CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)'
+      );
       final rows  = await sqlDb.query('app_settings',
           where: 'key = ?', whereArgs: [_kApiKey]);
       if (rows.isNotEmpty) {
