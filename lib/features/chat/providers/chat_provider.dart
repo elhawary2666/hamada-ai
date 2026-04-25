@@ -81,9 +81,13 @@ class ChatNotifier extends _$ChatNotifier {
   Future<void> initAiService() async {
     final ai = ref.read(aiServiceProvider);
     await ai.initialize();
-    state = state.copyWith(
-      isModelReady: ai.isReady,
-    );
+    state = state.copyWith(isModelReady: ai.isReady);
+  }
+
+  // Called from settings after API key is saved
+  Future<void> refreshReadyState() async {
+    final ai = ref.read(aiServiceProvider);
+    state = state.copyWith(isModelReady: ai.isReady);
   }
 
   Future<void> _initSession(String sid) async {
