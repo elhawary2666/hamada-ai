@@ -6,6 +6,7 @@ String _$aiServiceHash() => r'aiService_hash_v1';
 
 final aiServiceProvider = Provider<AiService>(
   (ref) {
+    ref.keepAlive(); // Never dispose — preserves API key in memory
     final svc = aiService(ref as AiServiceRef);
     return svc;
   },
