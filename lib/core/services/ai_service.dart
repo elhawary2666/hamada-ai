@@ -1,9 +1,9 @@
 // lib/core/services/ai_service.dart
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -13,6 +13,9 @@ import '../di/providers.dart';
 import 'memory_service.dart';
 
 part 'ai_service.g.dart';
+
+// Global notifier — UI listens to this for instant updates
+final aiReadyNotifier = ValueNotifier<bool>(false);
 
 const _groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
 const _model   = 'llama-3.3-70b-versatile';
@@ -123,41 +126,66 @@ class AiService {
   // ── INIT ──────────────────────────────────────────────────
 
   Future<void> initialize() async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString(_kApiKey);
-    if (key != null && key.isNotEmpty) {
-      _apiKey = key;
-      _ready  = true;
-      _log.i('✅ Groq API key loaded');
+    try {
+      final sqlDb = await db.database;
+      final rows  = await sqlDb.query('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
+      if (rows.isNotEmpty) {
+        final k = rows.first['value'] as String;
+        if (k.isNotEmpty) {
+          _apiKey = k;
+          _ready  = true;
+          aiReadyNotifier.value = true;
+          _log.i('✅ Groq API key loaded from DB');
+        }
+      }
+    } catch (e) {
+      _log.e('Failed to load API key', error: e);
     }
   }
 
   Future<bool> setApiKey(String key) async {
     final k = key.trim();
     if (!k.startsWith('gsk_') || k.length < 20) return false;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kApiKey, k);
-    // Force reload to confirm save worked
-    await prefs.reload();
-    final saved = prefs.getString(_kApiKey);
-    if (saved == null || saved.isEmpty) return false;
-    _apiKey = k;
-    _ready  = true;
-    _log.i('✅ API key saved and verified');
-    return true;
+    try {
+      final sqlDb = await db.database;
+      await sqlDb.insert('app_settings',
+        {'key': _kApiKey, 'value': k},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      // Verify save
+      final rows = await sqlDb.query('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
+      if (rows.isEmpty) return false;
+      _apiKey = k;
+      _ready  = true;
+      aiReadyNotifier.value = true;
+      _log.i('✅ API key saved and verified');
+      return true;
+    } catch (e) {
+      _log.e('Failed to save API key', error: e);
+      return false;
+    }
   }
 
   Future<bool> hasApiKey() async {
-    final prefs = await SharedPreferences.getInstance();
-    final k = prefs.getString(_kApiKey);
-    return k != null && k.isNotEmpty;
+    try {
+      final sqlDb = await db.database;
+      final rows  = await sqlDb.query('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
+      return rows.isNotEmpty && (rows.first['value'] as String).isNotEmpty;
+    } catch (_) { return false; }
   }
 
   Future<void> clearApiKey() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kApiKey);
+    try {
+      final sqlDb = await db.database;
+      await sqlDb.delete('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
+    } catch (_) {}
     _apiKey = '';
     _ready  = false;
+    aiReadyNotifier.value = false;
   }
 
   // ── CHAT — streaming ──────────────────────────────────────
