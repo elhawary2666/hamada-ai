@@ -20,6 +20,7 @@ abstract class Tables {
   static const appointments        = 'appointments';
   static const financialGoals      = 'financial_goals';
   static const recurringTx         = 'recurring_transactions';
+  static const appSettings         = 'app_settings';
 }
 
 class DatabaseHelper {
@@ -67,6 +68,7 @@ class DatabaseHelper {
       () => _createAppointments(db),
       () => _createFinancialGoals(db),
       () => _createRecurringTx(db),
+      () => _createSettings(db),
       () => _createFts(db),
       () => _createIndexes(db),
     ]) {
@@ -211,6 +213,12 @@ class DatabaseHelper {
       is_completed   INTEGER DEFAULT 0,
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL
+    )''');
+
+  Future<void> _createSettings(DatabaseExecutor db) => db.execute('''
+    CREATE TABLE IF NOT EXISTS app_settings(
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     )''');
 
   Future<void> _createRecurringTx(DatabaseExecutor db) => db.execute('''
