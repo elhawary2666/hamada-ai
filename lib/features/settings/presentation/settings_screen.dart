@@ -7,8 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/di/providers.dart';
+import '../../chat/providers/chat_provider.dart';
 import '../../../core/router/app_router.dart';
-import '../../../core/services/ai_service.dart';
+import '../../../core/services/ai_service.dart'; // includes aiReadyNotifier
 import '../../../core/services/backup_service.dart';
 import '../../../core/services/biometric_service.dart';
 import '../../../core/services/export_service.dart';
@@ -46,9 +47,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _Section(title: '🤖 حماده AI', children: [
           _InfoTile(label: 'النموذج',  value: ai.activeModelName),
           _InfoTile(label: 'المحرك',   value: ai.activeBackendName),
-          _InfoTile(label: 'الحالة',   value: ai.isReady ? '✅ جاهز' : '⚠️ محتاج API key'),
-          _InfoTile(label: 'باقي الطلبات/دقيقة',
-              value: ai.isReady ? '${ai.remainingRequests}/25' : '--'),
+          ValueListenableBuilder<bool>(
+            valueListenable: aiReadyNotifier,
+            builder: (_, ready, __) => Column(children: [
+              _InfoTile(label: 'الحالة', value: ready ? '✅ جاهز' : '⚠️ محتاج API key'),
+              _InfoTile(label: 'باقي الطلبات/دقيقة',
+                  value: ready ? '${ai.remainingRequests}/25' : '--'),
+            ]),
+          ),
         ]),
         const Gap(12),
 
@@ -292,9 +298,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     setState(() { _saving = true; _keyMsg = null; });
     try {
       final ok = await ref.read(aiServiceProvider).setApiKey(key);
-      setState(() {
+      if (ok) {
+        ref.read(chatNotifierProvider.notifier).refreshReadyState();
+      }
+      if (mounted) setState(() {
         _saving = false;
-        _keyMsg = ok ? '✅ تم الحفظ بنجاح' : '❌ key غير صحيح';
+        _keyMsg = ok ? '✅ تم الحفظ بنجاح — حماده جاهز!' : '❌ key غير صحيح';
       });
       _keyCtrl.clear();
     } catch (_) {
