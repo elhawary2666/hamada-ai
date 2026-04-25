@@ -41,40 +41,46 @@ class DatabaseHelper {
   }
 
   Future<void> _onConfigure(Database db) async {
-    await db.execute('PRAGMA foreign_keys = ON');
-    await db.execute('PRAGMA journal_mode = WAL');
-    await db.execute('PRAGMA cache_size = -8000');
-    await db.execute('PRAGMA synchronous = NORMAL');
-    await db.execute('PRAGMA temp_store = MEMORY');
+    // Each PRAGMA wrapped individually — some devices don't support all of them
+    for (final pragma in [
+      'PRAGMA foreign_keys = ON',
+      'PRAGMA cache_size = -8000',
+      'PRAGMA synchronous = NORMAL',
+      'PRAGMA temp_store = MEMORY',
+    ]) {
+      try { await db.execute(pragma); } catch (_) {}
+    }
   }
 
   Future<void> _onCreate(Database db, int v) async {
     _log.i('Creating database v$v');
-    await db.transaction((t) async {
-      await _createMessages(t);
-      await _createMemories(t);
-      await _createNotes(t);
-      await _createTransactions(t);
-      await _createAssets(t);
-      await _createDebts(t);
-      await _createBudgets(t);
-      await _createTasks(t);
-      await _createAppointments(t);
-      await _createFinancialGoals(t);
-      await _createRecurringTx(t);
-      await _createFts(t);
-      await _createIndexes(t);
-    });
+    // Each table created independently — one failure won't block the rest
+    for (final create in [
+      () => _createMessages(db),
+      () => _createMemories(db),
+      () => _createNotes(db),
+      () => _createTransactions(db),
+      () => _createAssets(db),
+      () => _createDebts(db),
+      () => _createBudgets(db),
+      () => _createTasks(db),
+      () => _createAppointments(db),
+      () => _createFinancialGoals(db),
+      () => _createRecurringTx(db),
+      () => _createFts(db),
+      () => _createIndexes(db),
+    ]) {
+      try { await create(); } catch (e) { _log.w('Table create warning: $e'); }
+    }
     _log.i('Database ready');
   }
 
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     _log.i('Upgrading DB from v$oldV to v$newV');
     if (oldV < 2) {
-      await _createFinancialGoals(db);
-      await _createRecurringTx(db);
-      // New index
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_recurring_next_due ON ${Tables.recurringTx}(next_due)');
+      try { await _createFinancialGoals(db); } catch (_) {}
+      try { await _createRecurringTx(db); } catch (_) {}
+      try { await db.execute('CREATE INDEX IF NOT EXISTS idx_recurring_next_due ON ${Tables.recurringTx}(next_due)'); } catch (_) {}
     }
   }
 
@@ -223,24 +229,29 @@ class DatabaseHelper {
     )''');
 
   Future<void> _createFts(DatabaseExecutor db) async {
-    await db.execute('''
-      CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.memoriesFts}
-      USING fts4(content, tokenize=unicode61)''');
-    await db.execute('''
-      CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.notesFts}
-      USING fts4(title, content, tokenize=unicode61)''');
-    await db.execute('''
-      CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.transactionsFts}
-      USING fts4(description, category, tokenize=unicode61)''');
+    // Use simple tokenizer — unicode61 not available on all Android versions
+    final ftsTables = [
+      "CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.memoriesFts} USING fts4(content)",
+      "CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.notesFts} USING fts4(title, content)",
+      "CREATE VIRTUAL TABLE IF NOT EXISTS ${Tables.transactionsFts} USING fts4(description, category)",
+    ];
+    for (final sql in ftsTables) {
+      try { await db.execute(sql); } catch (_) {}
+    }
   }
 
   Future<void> _createIndexes(DatabaseExecutor db) async {
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_messages_session   ON ${Tables.messages}(session_id, timestamp)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_memories_type      ON ${Tables.memories}(type, importance DESC)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_tx_date            ON ${Tables.financeTransactions}(date DESC)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_tasks_due          ON ${Tables.tasks}(due_date, status)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_goals_completed    ON ${Tables.financialGoals}(is_completed)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_recurring_next_due ON ${Tables.recurringTx}(next_due)');
+    final indexes = [
+      'CREATE INDEX IF NOT EXISTS idx_messages_session   ON ${Tables.messages}(session_id, timestamp)',
+      'CREATE INDEX IF NOT EXISTS idx_memories_type      ON ${Tables.memories}(type, importance DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_tx_date            ON ${Tables.financeTransactions}(date DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_tasks_due          ON ${Tables.tasks}(due_date, status)',
+      'CREATE INDEX IF NOT EXISTS idx_goals_completed    ON ${Tables.financialGoals}(is_completed)',
+      'CREATE INDEX IF NOT EXISTS idx_recurring_next_due ON ${Tables.recurringTx}(next_due)',
+    ];
+    for (final sql in indexes) {
+      try { await db.execute(sql); } catch (_) {}
+    }
   }
 
   // ─── GENERIC CRUD ─────────────────────────────────────────
