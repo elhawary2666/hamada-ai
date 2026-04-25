@@ -135,6 +135,11 @@ class ChatNotifier extends _$ChatNotifier {
     final ai   = ref.read(aiServiceProvider);
     final repo = ref.read(chatRepositoryProvider);
 
+    // Refresh ready state in case key was saved after init
+    if (!state.isModelReady && ai.isReady) {
+      state = state.copyWith(isModelReady: true);
+    }
+
     // Clear suggestions when user sends
     state = state.copyWith(suggestedReplies: []);
 

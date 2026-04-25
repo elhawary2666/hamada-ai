@@ -152,16 +152,19 @@ class ChatScreen extends HookConsumerWidget {
               isComposing.value = true;
             },
           ),
-        _InputBar(
-          controller:   inputCtrl,
-          isComposing:  isComposing.value,
-          isGenerating: chat.isGenerating,
-          isReady:      chat.isModelReady,
-          isListening:  isListening.value,
-          sttAvailable: sttAvailable.value,
-          onChanged:    (v) => isComposing.value = v.trim().isNotEmpty,
-          onVoice:      onVoice,
-          onSend:       onSend,
+        ValueListenableBuilder<bool>(
+          valueListenable: aiReadyNotifier,
+          builder: (_, aiReady, __) => _InputBar(
+            controller:   inputCtrl,
+            isComposing:  isComposing.value,
+            isGenerating: chat.isGenerating,
+            isReady:      chat.isModelReady || aiReady,
+            isListening:  isListening.value,
+            sttAvailable: sttAvailable.value,
+            onChanged:    (v) => isComposing.value = v.trim().isNotEmpty,
+            onVoice:      onVoice,
+            onSend:       onSend,
+          ),
         ),
       ]),
     );
