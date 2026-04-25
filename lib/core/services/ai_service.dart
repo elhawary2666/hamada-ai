@@ -128,20 +128,22 @@ class AiService {
 
   Future<void> initialize() async {
     try {
+      // db.database waits for DB to be fully ready including all tables
       final sqlDb = await db.database;
-      // Ensure table exists even if migration was missed
+      // Safety: ensure app_settings exists (for users upgrading from old versions)
       await sqlDb.execute(
         'CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)'
       );
-      final rows  = await sqlDb.query('app_settings',
-          where: 'key = ?', whereArgs: [_kApiKey]);
+      final rows = await sqlDb.query(
+        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
+      );
       if (rows.isNotEmpty) {
-        final k = rows.first['value'] as String;
+        final k = (rows.first['value'] as String?)?.trim() ?? '';
         if (k.isNotEmpty) {
           _apiKey = k;
           _ready  = true;
           aiReadyNotifier.value = true;
-          _log.i('✅ Groq API key loaded from DB');
+          _log.i('✅ API key loaded from DB');
         }
       }
     } catch (e) {
@@ -154,18 +156,25 @@ class AiService {
     if (!k.startsWith('gsk_') || k.length < 20) return false;
     try {
       final sqlDb = await db.database;
-      await sqlDb.insert('app_settings',
+      await sqlDb.execute(
+        'CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)'
+      );
+      await sqlDb.insert(
+        'app_settings',
         {'key': _kApiKey, 'value': k},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      // Verify save
-      final rows = await sqlDb.query('app_settings',
-          where: 'key = ?', whereArgs: [_kApiKey]);
+      // Verify the save actually worked
+      final rows = await sqlDb.query(
+        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
+      );
       if (rows.isEmpty) return false;
+      final saved = (rows.first['value'] as String?)?.trim() ?? '';
+      if (saved != k) return false;
       _apiKey = k;
       _ready  = true;
       aiReadyNotifier.value = true;
-      _log.i('✅ API key saved and verified');
+      _log.i('✅ API key saved and verified in DB');
       return true;
     } catch (e) {
       _log.e('Failed to save API key', error: e);
@@ -176,17 +185,20 @@ class AiService {
   Future<bool> hasApiKey() async {
     try {
       final sqlDb = await db.database;
-      final rows  = await sqlDb.query('app_settings',
-          where: 'key = ?', whereArgs: [_kApiKey]);
-      return rows.isNotEmpty && (rows.first['value'] as String).isNotEmpty;
+      final rows  = await sqlDb.query(
+        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
+      );
+      return rows.isNotEmpty && 
+             ((rows.first['value'] as String?)?.trim().isNotEmpty ?? false);
     } catch (_) { return false; }
   }
 
   Future<void> clearApiKey() async {
     try {
       final sqlDb = await db.database;
-      await sqlDb.delete('app_settings',
-          where: 'key = ?', whereArgs: [_kApiKey]);
+      await sqlDb.delete(
+        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
+      );
     } catch (_) {}
     _apiKey = '';
     _ready  = false;
