@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -108,7 +108,7 @@ class AiService {
   final MemoryService  memoryService;
 
   final _dio      = Dio(BaseOptions(connectTimeout: const Duration(seconds: 15)));
-  final _storage  = const FlutterSecureStorage();
+
   final _log      = Logger(printer: PrettyPrinter(methodCount: 0));
   final _rl       = _RateLimiter();
 
@@ -123,7 +123,8 @@ class AiService {
   // ── INIT ──────────────────────────────────────────────────
 
   Future<void> initialize() async {
-    final key = await _storage.read(key: _kApiKey);
+    final prefs = await SharedPreferences.getInstance();
+    final key = prefs.getString(_kApiKey);
     if (key != null && key.isNotEmpty) {
       _apiKey = key;
       _ready  = true;
@@ -134,20 +135,27 @@ class AiService {
   Future<bool> setApiKey(String key) async {
     final k = key.trim();
     if (!k.startsWith('gsk_') || k.length < 20) return false;
-    await _storage.write(key: _kApiKey, value: k);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kApiKey, k);
+    // Force reload to confirm save worked
+    await prefs.reload();
+    final saved = prefs.getString(_kApiKey);
+    if (saved == null || saved.isEmpty) return false;
     _apiKey = k;
     _ready  = true;
-    _log.i('✅ API key saved');
+    _log.i('✅ API key saved and verified');
     return true;
   }
 
   Future<bool> hasApiKey() async {
-    final k = await _storage.read(key: _kApiKey);
+    final prefs = await SharedPreferences.getInstance();
+    final k = prefs.getString(_kApiKey);
     return k != null && k.isNotEmpty;
   }
 
   Future<void> clearApiKey() async {
-    await _storage.delete(key: _kApiKey);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kApiKey);
     _apiKey = '';
     _ready  = false;
   }
