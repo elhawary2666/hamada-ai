@@ -5,7 +5,10 @@ part of 'memory_service.dart';
 String _$memoryServiceHash() => r'memoryService_hash_v1';
 
 final memoryServiceProvider = Provider<MemoryService>(
-  (ref) => memoryService(ref as MemoryServiceRef),
+  (ref) {
+    ref.keepAlive();
+    return memoryService(ref as MemoryServiceRef);
+  },
   name: r'memoryServiceProvider',
   debugGetCreateSourceHash:
       const bool.fromEnvironment('dart.vm.product') ? null : _$memoryServiceHash,
