@@ -1,0 +1,63 @@
+name: 🤖 Hamada AI — Build & Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-and-build:
+    name: Test & Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.4'
+          channel: stable
+          cache: true
+
+      - name: 📦 Install dependencies
+        run: flutter pub get
+
+      - name: 🔨 Generate code (build_runner)
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: 🧪 Run unit tests (excluding database)
+        run: |
+          flutter test test/unit/backup_service_test.dart \
+                       test/unit/rate_limiter_test.dart \
+                       test/unit/recurring_service_test.dart \
+                       --reporter=expanded
+
+      - name: 🏗️ Build APK (release)
+        run: flutter build apk --release --no-obfuscate
+
+      - name: 📤 Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hamada-ai-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: 📊 Build summary
+        run: |
+          APK_SIZE=$(du -sh build/app/outputs/flutter-apk/app-release.apk | cut -f1)
+          echo "## ✅ Hamada AI Build Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| APK Size | $APK_SIZE |" >> $GITHUB_STEP_SUMMARY
+          echo "| Flutter | 3.27.4 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Java | 17 |" >> $GITHUB_STEP_SUMMARY
