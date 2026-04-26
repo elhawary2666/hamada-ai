@@ -14,4 +14,19 @@ final tasksNotifierProvider = AsyncNotifierProvider<TasksNotifier,
   allTransitiveDependencies: null,
 );
 
-typedef _$TasksNotifier = AsyncNotifier<Map<String, List<Map<String, dynamic>>>>;
+typedef _$TasksNotifier =
+    AsyncNotifier<Map<String, List<Map<String, dynamic>>>>;
+
+String _$appointmentsHash() => r'appointments_hash_v1';
+
+final appointmentsProvider =
+    FutureProvider<List<Map<String, dynamic>>>(
+  (ref) => appointments(ref as AppointmentsRef),
+  name: r'appointmentsProvider',
+  debugGetCreateSourceHash:
+      const bool.fromEnvironment('dart.vm.product') ? null : _$appointmentsHash,
+  dependencies: null,
+  allTransitiveDependencies: null,
+);
+
+typedef AppointmentsRef = FutureProviderRef<List<Map<String, dynamic>>>;

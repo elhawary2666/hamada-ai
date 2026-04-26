@@ -1,5 +1,6 @@
 // lib/features/chat/providers/chat_provider.dart
 import 'dart:async';
+import 'dart:convert';
 
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -48,6 +49,7 @@ class ChatState {
     ChatStatus?             status,
     String?                 streamingBuffer,
     String?                 errorMessage,
+    bool                    clearError = false,
     double?                 tokensPerSec,
     bool?                   isModelReady,
     List<String>?           suggestedReplies,
@@ -55,7 +57,8 @@ class ChatState {
     messages:         messages         ?? this.messages,
     status:           status           ?? this.status,
     streamingBuffer:  streamingBuffer  ?? this.streamingBuffer,
-    errorMessage:     errorMessage,
+    // ✅ FIX Bug #6: Only clear errorMessage when explicitly requested
+    errorMessage:     clearError ? null : (errorMessage ?? this.errorMessage),
     sessionId:        sessionId,
     tokensPerSec:     tokensPerSec     ?? this.tokensPerSec,
     isModelReady:     isModelReady     ?? this.isModelReady,
@@ -192,11 +195,13 @@ class ChatNotifier extends _$ChatNotifier {
         status:          ChatStatus.idle,
         streamingBuffer: '',
         tokensPerSec:    response.tokensPerSec,
-        errorMessage:    null,
+        clearError:      true,
       );
 
       // Generate suggested replies async
       _generateSuggestions(trimmed, response.text);
+      // Parse and execute Function Calling from AI response
+      _parseFunctionCallAndExecute(response.text);
 
     } catch (e) {
       final errMsg = placeholder.copyWith(
@@ -261,7 +266,207 @@ class ChatNotifier extends _$ChatNotifier {
     state = state.copyWith(suggestedReplies: list);
   }
 
-  void clearError() => state = state.copyWith(status: ChatStatus.idle);
+  void clearError() => state = state.copyWith(
+      status: ChatStatus.idle, clearError: true);
+
+  // ✅ FIX Bug #2: Stop button — actually cancels the generating state
+  void cancelGeneration() {
+    if (!state.isGenerating) return;
+    // Remove the empty placeholder bubble that was being filled
+    final msgs = List<ChatMessageModel>.from(state.messages);
+    if (msgs.isNotEmpty && msgs.last.isEmpty) {
+      msgs.removeLast();
+    }
+    state = state.copyWith(
+      messages:        msgs,
+      status:          ChatStatus.idle,
+      streamingBuffer: '',
+      clearError:      true,
+    );
+  }
+
+  // ── FUNCTION CALLING — JSON Parser & Executor ─────────────
+
+  /// يـparse الـ JSON اللي بيرجعه حماده وينفذ الـ action على الـ DB
+  void _parseFunctionCallAndExecute(String aiResponse) {
+    Future.microtask(() async {
+      try {
+        final parsed = _tryParseActionJson(aiResponse);
+        if (parsed == null) return; // مش function call — رد عادي
+
+        final action = parsed['action'] as String?;
+        final data   = parsed['data']   as Map<String, dynamic>?;
+        if (action == null || data == null) return;
+
+        final db  = ref.read(databaseHelperProvider);
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final id  = _uuid.v4();  // ✅ UUID — no collision risk
+
+        switch (action) {
+          case 'add_transaction':
+            await _executeAddTransaction(db, data, id, now);
+            break;
+          case 'add_task':
+            await _executeAddTask(db, data, id, now);
+            break;
+          case 'add_note':
+            await _executeAddNote(db, data, id, now);
+            break;
+          case 'add_appointment':
+            await _executeAddAppointment(db, data, id, now);
+            break;
+        }
+      } catch (_) {}
+    });
+  }
+
+  /// يحاول يـparse الـ JSON — بيرجع null لو مش action
+  Map<String, dynamic>? _tryParseActionJson(String raw) {
+    try {
+      // شيل أي whitespace في الأول أو الآخر
+      final trimmed = raw.trim();
+
+      // لازم يبدأ بـ { عشان يكون JSON
+      if (!trimmed.startsWith('{')) return null;
+
+      // شيل code fences لو موجودة
+      final clean = trimmed
+          .replaceAll('```json', '')
+          .replaceAll('```', '')
+          .trim();
+
+      final s = clean.indexOf('{');
+      final e = clean.lastIndexOf('}');
+      if (s == -1 || e <= s) return null;
+
+      final decoded = json.decode(clean.substring(s, e + 1));
+      if (decoded is! Map<String, dynamic>) return null;
+      if (!decoded.containsKey('action') || !decoded.containsKey('data')) return null;
+
+      return decoded;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _executeAddTransaction(
+    dynamic db, Map<String, dynamic> data, String id, int now,
+  ) async {
+    final amount = _toDouble(data['amount']);
+    if (amount == null || amount <= 0) return;
+
+    final type     = (data['type'] as String?)?.trim() ?? 'expense';
+    final category = (data['category'] as String?)?.trim() ?? 'أخرى';
+    final desc     = (data['description'] as String?)?.trim() ?? '';
+
+    // Validate type
+    final validType = (type == 'income' || type == 'expense') ? type : 'expense';
+
+    await db.insert('finance_transactions', {
+      'id':             id,
+      'type':           validType,
+      'amount':         amount,
+      'currency':       'EGP',
+      'category':       category,
+      'ai_category':    category,
+      'description':    desc,
+      'date':           now,
+      'is_recurring':   0,
+      'recurring_id':   null,
+      'payment_method': 'cash',
+      'created_at':     now,
+    });
+  }
+
+  Future<void> _executeAddTask(
+    dynamic db, Map<String, dynamic> data, String id, int now,
+  ) async {
+    final title    = (data['title'] as String?)?.trim() ?? '';
+    if (title.isEmpty) return;
+
+    final priority = _normalizePriority(data['priority'] as String?);
+    final dueDate  = _parseDueDate(data['due_date'] as String?);
+
+    await db.insert('tasks', {
+      'id':          id,
+      'title':       title,
+      'description': (data['description'] as String?)?.trim() ?? '',
+      'due_date':    dueDate,
+      'priority':    priority,
+      'status':      'pending',
+      'created_at':  now,
+    });
+  }
+
+  Future<void> _executeAddNote(
+    dynamic db, Map<String, dynamic> data, String id, int now,
+  ) async {
+    final content = (data['content'] as String?)?.trim() ?? '';
+    if (content.isEmpty) return;
+
+    final title = (data['title'] as String?)?.trim() ?? '';
+
+    await db.insert('user_notes', {
+      'id':         id,
+      'title':      title,
+      'content':    content,
+      'tags':       '[]',
+      'color':      'default',
+      'is_pinned':  0,
+      'created_at': now,
+      'updated_at': now,
+    });
+  }
+
+  Future<void> _executeAddAppointment(
+    dynamic db, Map<String, dynamic> data, String id, int now,
+  ) async {
+    final title = (data['title'] as String?)?.trim() ?? '';
+    if (title.isEmpty) return;
+
+    final startTimeStr = data['start_time'] as String?;
+    int startTime = now;
+    if (startTimeStr != null && startTimeStr.isNotEmpty) {
+      try {
+        startTime = DateTime.parse(startTimeStr).millisecondsSinceEpoch;
+      } catch (_) {}
+    }
+
+    await db.insert('appointments', {
+      'id':          id,
+      'title':       title,
+      'description': (data['description'] as String?)?.trim() ?? '',
+      'start_time':  startTime,
+      'end_time':    null,
+      'location':    (data['location'] as String?)?.trim() ?? '',
+      'created_at':  now,
+    });
+  }
+
+  // ── HELPERS ───────────────────────────────────────────────
+
+  double? _toDouble(dynamic val) {
+    if (val == null) return null;
+    if (val is double) return val;
+    if (val is int)    return val.toDouble();
+    if (val is String) return double.tryParse(val);
+    return null;
+  }
+
+  String _normalizePriority(String? p) {
+    switch (p?.toLowerCase().trim()) {
+      case 'high':   case 'عالي':  return 'high';
+      case 'low':    case 'منخفض': return 'low';
+      default:                     return 'medium';
+    }
+  }
+
+  int? _parseDueDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return null;
+    try {
+      return DateTime.parse(dateStr).millisecondsSinceEpoch;
+    } catch (_) { return null; }
+  }
 
   void _appendAssistant(String text) {
     final msg = ChatMessageModel.assistant(

@@ -33,18 +33,37 @@ class _ErrorBoundaryState extends State<ErrorBoundary> {
   @override
   void initState() {
     super.initState();
+    // Override ErrorWidget builder so build errors get caught here
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      _log.e('Widget build error', error: details.exception);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _error = details.exception);
+      });
+      // Return a minimal fallback while we update state
+      return const SizedBox.shrink();
+    };
   }
 
   @override
+  void dispose() {
+    // Restore default ErrorWidget builder on dispose
+    ErrorWidget.builder = (details) => ErrorWidget(details.exception);
+    super.dispose();
+  }
+
+  void _reset() => setState(() => _error = null);
+
+  @override
   Widget build(BuildContext context) {
-    if (_error != null) return _ErrorScreen(error: _error!);
+    if (_error != null) return _ErrorScreen(error: _error!, onRetry: _reset);
     return widget.child;
   }
 }
 
 class _ErrorScreen extends StatelessWidget {
-  const _ErrorScreen({required this.error});
+  const _ErrorScreen({required this.error, required this.onRetry});
   final Object error;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -61,14 +80,28 @@ class _ErrorScreen extends StatelessWidget {
         const Text('جرّب تقفل التطبيق وتفتحه تاني',
             style: TextStyle(fontSize: 14, color: Color(0xFF768390),
                 fontFamily: 'Cairo')),
+        if (!kReleaseMode) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF161B22),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              error.toString().substring(0, error.toString().length.clamp(0, 200)),
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF768390), fontFamily: 'monospace'),
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4F8EF7)),
           icon:  const Icon(Icons.refresh, color: Colors.white),
           label: const Text('إعادة المحاولة',
               style: TextStyle(color: Colors.white, fontFamily: 'Cairo')),
-          onPressed: () => Navigator.of(context, rootNavigator: true)
-              .pushNamedAndRemoveUntil('/', (_) => false),
+          onPressed: onRetry,
         ),
       ]),
     )),
@@ -96,3 +129,5 @@ String _friendlyMessage(Object e) {
     return 'وصلت للحد المسموح — استنى دقيقة ⏳';
   return 'حصل خطأ — جرّب تاني بعد شوية';
 }
+
+

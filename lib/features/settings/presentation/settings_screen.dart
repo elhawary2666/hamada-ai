@@ -392,6 +392,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               await ref.read(aiServiceProvider).clearApiKey();
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('onboarding_complete', false);
+              // ✅ Reset router onboarding cache so it re-reads from disk
+              resetOnboardingCache();
               if (context.mounted) context.go(AppRoutes.onboarding);
             },
             child: Text('احذف',

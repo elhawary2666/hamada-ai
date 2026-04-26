@@ -281,28 +281,75 @@ class FinanceNotifier extends _$FinanceNotifier {
     final ai  = ref.read(aiServiceProvider);
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    state = state.copyWith(isClassifying: true);
+    // ✅ FIX P1: Optimistic update — only if viewing the current month
+    final txDate  = dateMs != null ? DateTime.fromMillisecondsSinceEpoch(dateMs) : DateTime.now();
+    final isCurrentMonthView = state.selectedYear  == txDate.year &&
+                               state.selectedMonth == txDate.month;
 
-    String aiCategory = category;
-    if (description != null && description.isNotEmpty) {
-      aiCategory = await ai.classifyFinanceTransaction(
-          description: description, amount: amount);
-      aiCategory = aiCategory.trim().split('\n').first;
-    }
-
-    final tx = FinanceTransaction(
+    final tempTx = FinanceTransaction(
       id:            _uuid.v4(),
       type:          type,
       amount:        amount,
       category:      category,
-      aiCategory:    aiCategory,
+      aiCategory:    category,
       description:   description,
       date:          dateMs ?? now,
       paymentMethod: paymentMethod,
     );
-    await db.insert('finance_transactions', tx.toMap());
-    state = state.copyWith(isClassifying: false);
-    await _loadAll();
+
+    // Update state instantly (user sees it right away — only for current month view)
+    if (isCurrentMonthView) {
+      final currentTxs = [tempTx, ...state.transactions];
+      final newIncome  = state.monthlySummary?.income  ?? 0;
+      final newExpense = state.monthlySummary?.expense ?? 0;
+      final updatedSummary = MonthlySummary(
+        income:  type == 'income'  ? newIncome  + amount : newIncome,
+        expense: type == 'expense' ? newExpense + amount : newExpense,
+      );
+      state = state.copyWith(
+        transactions:   currentTxs,
+        monthlySummary: updatedSummary,
+        isClassifying:  description != null && description.isNotEmpty,
+      );
+    } else {
+      state = state.copyWith(
+        isClassifying: description != null && description.isNotEmpty);
+    }
+
+    // Persist to DB
+    await db.insert('finance_transactions', tempTx.toMap());
+
+    // AI classification in background if description provided
+    if (description != null && description.isNotEmpty) {
+      final aiCategory = await ai.classifyFinanceTransaction(
+          description: description, amount: amount);
+      final cleanCat = aiCategory.trim().split('\n').first;
+
+      // Update the saved record with AI category
+      await db.update('finance_transactions',
+          {'ai_category': cleanCat}, tempTx.id);
+
+      state = state.copyWith(isClassifying: false);
+    }
+
+    // Full reload only for category stats (chart) — not the whole state
+    await _reloadCategoryStats();
+  }
+
+  Future<void> _reloadCategoryStats() async {
+    final db  = ref.read(databaseHelperProvider);
+    final y   = state.selectedYear;
+    final m   = state.selectedMonth;
+    final catMap  = await db.getCategoryTotals(y, m);
+    final expense = state.monthlySummary?.expense ?? 1.0;
+    final cats = catMap.entries.map((e) => CategoryStat(
+      category:   e.key,
+      total:      e.value,
+      count:      state.transactions
+          .where((t) => t.category == e.key && t.isExpense).length,
+      percentage: e.value / (expense > 0 ? expense : 1) * 100,
+    )).toList();
+    state = state.copyWith(categoryStats: cats);
   }
 
   Future<void> deleteTransaction(String id) async {

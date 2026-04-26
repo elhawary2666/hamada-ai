@@ -23,13 +23,19 @@ abstract class AppRoutes {
   static const settings   = '/settings';
 }
 
+// ✅ FIX Bug #3: Cache onboarding value — avoid SharedPreferences.getInstance()
+// on every navigation event (was called for every tab switch)
+bool? _onboardingComplete;
+
 @riverpod
 GoRouter appRouter(AppRouterRef ref) => GoRouter(
   initialLocation: AppRoutes.chat,
   redirect: (context, state) async {
-    final prefs     = await SharedPreferences.getInstance();
-    final onboarded = prefs.getBool('onboarding_complete') ?? false;
-    if (!onboarded && state.matchedLocation != AppRoutes.onboarding) {
+    // Only read from disk once; after that use cached value
+    _onboardingComplete ??=
+        (await SharedPreferences.getInstance()).getBool('onboarding_complete') ?? false;
+
+    if (!_onboardingComplete! && state.matchedLocation != AppRoutes.onboarding) {
       return AppRoutes.onboarding;
     }
     return null;
@@ -51,3 +57,10 @@ GoRouter appRouter(AppRouterRef ref) => GoRouter(
     ),
   ],
 );
+
+/// Call this after onboarding completes so the cache stays in sync
+void markOnboardingComplete() => _onboardingComplete = true;
+
+/// Call this when resetting the app to force re-check of onboarding state
+void resetOnboardingCache() => _onboardingComplete = null;
+

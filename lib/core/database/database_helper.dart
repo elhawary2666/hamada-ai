@@ -268,10 +268,13 @@ class DatabaseHelper {
 
   // ─── GENERIC CRUD ─────────────────────────────────────────
 
+  // ✅ FIX H4: Run insert + FTS sync in same transaction to prevent divergence
   Future<void> insert(String table, Map<String, dynamic> row) async {
     final db = await database;
-    await db.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
-    _syncFts(table, row);
+    await db.transaction((txn) async {
+      await txn.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _syncFtsTxn(txn, table, row);
+    });
   }
 
   Future<void> update(String table, Map<String, dynamic> row, String id) async {
@@ -291,22 +294,30 @@ class DatabaseHelper {
         where: where, whereArgs: whereArgs);
   }
 
+  // ✅ Synchronous FTS sync inside a transaction
+  Future<void> _syncFtsTxn(DatabaseExecutor txn, String table, Map<String, dynamic> row) async {
+    try {
+      if (table == Tables.memories) {
+        await txn.insert(Tables.memoriesFts, {'content': row['content'] ?? ''},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      } else if (table == Tables.userNotes) {
+        await txn.insert(Tables.notesFts,
+            {'title': row['title'] ?? '', 'content': row['content'] ?? ''},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      } else if (table == Tables.financeTransactions) {
+        await txn.insert(Tables.transactionsFts,
+            {'description': row['description'] ?? '', 'category': row['category'] ?? ''},
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    } catch (_) {}
+  }
+
+  // Keep old async version for backward compatibility (used nowhere else now)
   void _syncFts(String table, Map<String, dynamic> row) {
     Future.microtask(() async {
       final db = await database;
       try {
-        if (table == Tables.memories) {
-          await db.insert(Tables.memoriesFts, {'content': row['content'] ?? ''},
-              conflictAlgorithm: ConflictAlgorithm.replace);
-        } else if (table == Tables.userNotes) {
-          await db.insert(Tables.notesFts,
-              {'title': row['title'] ?? '', 'content': row['content'] ?? ''},
-              conflictAlgorithm: ConflictAlgorithm.replace);
-        } else if (table == Tables.financeTransactions) {
-          await db.insert(Tables.transactionsFts,
-              {'description': row['description'] ?? '', 'category': row['category'] ?? ''},
-              conflictAlgorithm: ConflictAlgorithm.replace);
-        }
+        await _syncFtsTxn(db, table, row);
       } catch (_) {}
     });
   }
@@ -333,23 +344,52 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> searchMemoriesFts(String q, {int limit = 20}) async {
     final db = await database;
+    // ✅ FIX Bug #4: FTS4 rowid ≠ main table rowid when using UUID PKs.
+    // Strategy: query FTS for matching content strings, then lookup main table by content.
+    final cleaned = q.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF]'), ' ').trim();
+    if (cleaned.isEmpty) return [];
+
     try {
-      final ids = await db.rawQuery(
-          'SELECT rowid FROM ${Tables.memoriesFts} WHERE content MATCH ? LIMIT ?',
-          [q.replaceAll(RegExp(r'[^\w\s\u0600-\u06FF]'), ''), limit]);
-      if (ids.isEmpty) return [];
-      final rowIds = ids.map((r) => r['rowid']).toList();
+      // Get matching content strings from FTS
+      final ftsRows = await db.rawQuery(
+          'SELECT content FROM ${Tables.memoriesFts} WHERE content MATCH ? LIMIT ?',
+          [cleaned, limit * 2]);
+
+      if (ftsRows.isEmpty) return [];
+
+      // Build OR conditions to find matching memories by content
+      final contents = ftsRows
+          .map((r) => r['content'] as String?)
+          .where((c) => c != null && c.isNotEmpty)
+          .toList();
+
+      if (contents.isEmpty) return [];
+
+      // Use LIKE fallback to match by content — safe and works with Arabic
+      final placeholders = contents.map((_) => 'content LIKE ?').join(' OR ');
+      final args = contents.map((c) => '%$c%').toList();
+
       return db.query(Tables.memories,
-          where: 'rowid IN (${List.filled(rowIds.length, '?').join(',')}) AND is_active = 1',
-          whereArgs: rowIds,
+          where: 'is_active = 1 AND ($placeholders)',
+          whereArgs: args,
           orderBy: 'importance DESC, last_accessed DESC',
           limit: limit);
     } catch (_) {
+      // Final fallback: LIKE search directly on memories table
       return db.query(Tables.memories,
           where: 'content LIKE ? AND is_active = 1',
-          whereArgs: ['%$q%'], limit: limit,
+          whereArgs: ['%$q%'],
+          limit: limit,
           orderBy: 'importance DESC');
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getRecentMemories({int limit = 8}) async {
+    final db = await database;
+    return db.query(Tables.memories,
+        where: 'is_active = 1',
+        orderBy: 'importance DESC, last_accessed DESC',
+        limit: limit);
   }
 
   Future<List<Map<String, dynamic>>> getMemoriesByType(String type, {int limit = 8}) async {

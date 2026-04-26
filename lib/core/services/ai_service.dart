@@ -87,11 +87,12 @@ class HamadaResponse {
 
 @riverpod
 AiService aiService(AiServiceRef ref) {
+  // NOTE: ai_service.g.dart uses ref.keepAlive() so this service is never
+  // disposed automatically. The onDispose here is a no-op kept for clarity.
   final svc = AiService(
     db:            ref.watch(databaseHelperProvider),
     memoryService: ref.watch(memoryServiceProvider),
   );
-  ref.onDispose(svc.dispose);
   return svc;
 }
 
@@ -489,11 +490,54 @@ class AiService {
 
   Future<String> _getTodayContext() async {
     try {
-      final tasks = await db.getTodayTasks();
-      final appts = await db.getUpcomingAppointments(withinDays: 1);
-      final t = tasks.isEmpty ? '' : 'مهام اليوم: ${tasks.map((x) => x['title']).join(" · ")}';
-      final a = appts.isEmpty ? '' : 'مواعيد اليوم: ${appts.map((x) => x['title']).join(" · ")}';
-      return [t, a].where((s) => s.isNotEmpty).join('\n');
+      final now   = DateTime.now();
+      final parts = <String>[];
+
+      // الرصيد الحالي (الشهر الجاري)
+      try {
+        final summary = await db.getMonthSummary(now.year, now.month);
+        final income  = summary['income']  ?? 0.0;
+        final expense = summary['expense'] ?? 0.0;
+        final balance = income - expense;
+        final sign    = balance >= 0 ? '+' : '';
+        parts.add('الرصيد الشهري: $sign${balance.toStringAsFixed(0)} ج.م'
+            ' (دخل: ${income.toStringAsFixed(0)} | مصروف: ${expense.toStringAsFixed(0)})');
+      } catch (_) {}
+
+      // المهام المتأخرة
+      try {
+        final overdue = await db.getOverdueTasks();
+        if (overdue.isNotEmpty) {
+          final titles = overdue.take(3).map((t) => t['title'] as String).join(' · ');
+          parts.add('مهام متأخرة (${overdue.length}): $titles');
+        }
+      } catch (_) {}
+
+      // مهام اليوم
+      try {
+        final tasks = await db.getTodayTasks();
+        if (tasks.isNotEmpty) {
+          final titles = tasks.take(3).map((t) => t['title'] as String).join(' · ');
+          parts.add('مهام اليوم: $titles');
+        }
+      } catch (_) {}
+
+      // المواعيد القريبة (خلال يومين)
+      try {
+        final appts = await db.getUpcomingAppointments(withinDays: 2);
+        if (appts.isNotEmpty) {
+          final titles = appts.take(3).map((a) {
+            final ts    = a['start_time'] as int?;
+            final timeStr = ts != null
+                ? '${DateTime.fromMillisecondsSinceEpoch(ts).hour}:${DateTime.fromMillisecondsSinceEpoch(ts).minute.toString().padLeft(2, '0')}'
+                : '';
+            return '${a['title']}${timeStr.isNotEmpty ? " ($timeStr)" : ""}';
+          }).join(' · ');
+          parts.add('مواعيد قريبة: $titles');
+        }
+      } catch (_) {}
+
+      return parts.isEmpty ? '' : parts.join('\n');
     } catch (_) { return ''; }
   }
 

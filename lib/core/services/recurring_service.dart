@@ -1,6 +1,7 @@
 // lib/core/services/recurring_service.dart
 import 'package:logger/logger.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/database_helper.dart';
@@ -18,16 +19,28 @@ class RecurringService {
   final _uuid = const Uuid();
   final _log  = Logger(printer: PrettyPrinter(methodCount: 0));
 
-  /// Check for due recurring transactions and create them
+  // ✅ FIX Bug #7: Idempotency guard — only run once per calendar day
   Future<int> processDueTransactions() async {
+    final prefs   = await SharedPreferences.getInstance();
+    final todayKey = _todayKey();
+    final lastRun  = prefs.getString('recurring_last_run');
+
+    // Already ran today — skip to prevent duplicates
+    if (lastRun == todayKey) {
+      _log.d('Recurring: already ran today, skipping');
+      return 0;
+    }
+
     final due = await db.getDueRecurringTransactions();
-    if (due.isEmpty) return 0;
+    if (due.isEmpty) {
+      await prefs.setString('recurring_last_run', todayKey);
+      return 0;
+    }
 
     int count = 0;
     for (final rec in due) {
       try {
         final now = DateTime.now().millisecondsSinceEpoch;
-        // Create actual transaction
         await db.insert('finance_transactions', {
           'id':             _uuid.v4(),
           'type':           rec['type'],
@@ -43,18 +56,20 @@ class RecurringService {
           'created_at':     now,
         });
 
-        // Calculate next due date
         final nextDue = _calcNextDue(
           DateTime.fromMillisecondsSinceEpoch(rec['next_due'] as int),
           rec['frequency'] as String,
         );
         await db.updateRecurringNextDue(rec['id'] as String, nextDue.millisecondsSinceEpoch);
         count++;
-        _log.i('✅ Recurring tx created: ${rec['title']} — ${rec['amount']} EGP');
+        _log.i('✅ Recurring tx: ${rec['title']} — ${rec['amount']} EGP');
       } catch (e) {
-        _log.e('Failed to process recurring: ${rec['id']}', error: e);
+        _log.e('Failed recurring: ${rec['id']}', error: e);
       }
     }
+
+    // Mark as run for today
+    await prefs.setString('recurring_last_run', todayKey);
     return count;
   }
 
@@ -77,4 +92,10 @@ class RecurringService {
       default:        return f;
     }
   }
+
+  String _todayKey() {
+    final d = DateTime.now();
+    return '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+  }
 }
+

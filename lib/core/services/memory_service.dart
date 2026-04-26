@@ -66,7 +66,7 @@ class MemoryService {
     if (query.trim().isEmpty) return [];
 
     final ftsResults = await db.searchMemoriesFts(query, limit: topK * 3);
-    if (ftsResults.isEmpty) return db.getMemoriesByType('fact', limit: topK);
+    if (ftsResults.isEmpty) return db.getRecentMemories(limit: topK);
 
     final queryVec = _textToSimpleEmbedding(query);
     final scored   = <_Scored>[];

@@ -164,6 +164,8 @@ class ChatScreen extends HookConsumerWidget {
             onChanged:    (v) => isComposing.value = v.trim().isNotEmpty,
             onVoice:      onVoice,
             onSend:       onSend,
+            // ✅ FIX Bug #2: Wire stop button to actual cancel method
+            onStop:       () => notifier.cancelGeneration(),
           ),
         ),
       ]),
@@ -640,12 +642,13 @@ class _InputBar extends HookWidget {
     required this.onChanged,
     required this.onVoice,
     required this.onSend,
+    required this.onStop,   // ✅ FIX Bug #2
   });
   final TextEditingController controller;
   final bool   isComposing, isGenerating, isReady,
                isListening, sttAvailable;
   final ValueChanged<String> onChanged;
-  final VoidCallback onVoice, onSend;
+  final VoidCallback onVoice, onSend, onStop;
 
   @override
   Widget build(BuildContext context) {
@@ -714,7 +717,7 @@ class _InputBar extends HookWidget {
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
             child: isGenerating
-                ? _StopBtn()
+                ? _StopBtn(onStop: onStop)   // ✅ FIX Bug #2
                 : _SendBtn(
                     enabled: isComposing && isReady,
                     onSend:  onSend),
@@ -779,18 +782,27 @@ class _SendBtn extends StatelessWidget {
   );
 }
 
+// ✅ FIX Bug #2: Stop button now actually stops generation
 class _StopBtn extends StatelessWidget {
+  const _StopBtn({required this.onStop});
+  final VoidCallback onStop;
+
   @override
-  Widget build(BuildContext context) => Container(
-    width: 44, height: 44,
-    decoration: const BoxDecoration(
-        shape: BoxShape.circle, color: AppColors.expense),
-    child: const Icon(
-        Icons.stop_rounded, color: Colors.white, size: 22),
-  )
-  .animate(onPlay: (c) => c.repeat())
-  .scaleXY(begin: 0.95, end: 1.05,
-      duration: 700.ms, curve: Curves.easeInOut)
-  .then()
-  .scaleXY(begin: 1.05, end: 0.95, duration: 700.ms);
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: () {
+      HapticFeedback.mediumImpact();
+      onStop();
+    },
+    child: Container(
+      width: 44, height: 44,
+      decoration: const BoxDecoration(
+          shape: BoxShape.circle, color: AppColors.expense),
+      child: const Icon(Icons.stop_rounded, color: Colors.white, size: 22),
+    )
+    .animate(onPlay: (c) => c.repeat())
+    .scaleXY(begin: 0.95, end: 1.05,
+        duration: 700.ms, curve: Curves.easeInOut)
+    .then()
+    .scaleXY(begin: 1.05, end: 0.95, duration: 700.ms),
+  );
 }

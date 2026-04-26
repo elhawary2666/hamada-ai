@@ -149,6 +149,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       if (!ok) { setState(() { _error = 'API key غير صحيح'; _loading = false; }); return; }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('onboarding_complete', true);
+      markOnboardingComplete(); // ✅ keep router cache in sync
       if (!mounted) return;
       context.go(AppRoutes.chat);
     } catch (_) {
