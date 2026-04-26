@@ -213,19 +213,12 @@ class AiService {
     required List<Map<String, dynamic>> history,
     void Function(String token)? onToken,
   }) async {
-    // Always re-check key from DB before sending
+    // Re-check key from DB if not in memory
     if (_apiKey.isEmpty || !_ready) {
       await initialize();
     }
     if (_apiKey.isEmpty || !_ready) {
-      // Show diagnostic info to help debug
-      final sqlDb = await db.database;
-      List<Map<String,dynamic>> rows = [];
-      try { rows = await sqlDb.query('app_settings'); } catch(e) {
-        throw Exception('DB error: $e');
-      }
-      final keys = rows.map((r) => r['key']).toList();
-      throw Exception('Key مش موجود في DB\nالجداول الموجودة: app_settings\nالمحتوى: $keys\n_ready=$_ready');
+      throw Exception('API key مش متضبط — روح الإعدادات وضيف الـ Key 🔑');
     }
     _checkRateLimit();
 
@@ -251,9 +244,7 @@ class AiService {
       {'role': 'user',      'content': userMessage},
     ];
 
-    final buf = StringBuffer();
-    final sw  = Stopwatch()..start();
-    int   tok = 0;
+    final sw = Stopwatch()..start();
 
     try {
       _rl.record();
@@ -264,39 +255,34 @@ class AiService {
             'Authorization': 'Bearer $_apiKey',
             'Content-Type':  'application/json',
           },
-          responseType: ResponseType.stream,
+          receiveTimeout: const Duration(seconds: 30),
         ),
         data: {
           'model':       _model,
           'messages':    messages,
-          'stream':      true,
+          'stream':      false,
           'max_tokens':  1024,
           'temperature': 0.7,
           'top_p':       0.9,
         },
       );
 
-      String leftover = '';
-      await for (final chunk in (response.data as ResponseBody).stream) {
-        final text  = leftover + utf8.decode(chunk);
-        final lines = text.split('\n');
-        leftover    = lines.last;
+      final text = (response.data['choices']?[0]?['message']?['content']
+          as String? ?? '').trim();
+      final tok  = (response.data['usage']?['total_tokens'] as int?) ?? 0;
 
-        for (final line in lines.take(lines.length - 1)) {
-          if (!line.startsWith('data: ')) continue;
-          final data = line.substring(6).trim();
-          if (data == '[DONE]') break;
-          try {
-            final json  = jsonDecode(data);
-            final delta = json['choices']?[0]?['delta']?['content'] as String?;
-            if (delta != null && delta.isNotEmpty) {
-              buf.write(delta);
-              tok++;
-              onToken?.call(delta);
-            }
-          } catch (_) {}
-        }
-      }
+      // Simulate streaming by calling onToken with full text
+      if (text.isNotEmpty) onToken?.call(text);
+
+      sw.stop();
+      final tps = sw.elapsedMilliseconds > 0
+          ? tok / (sw.elapsedMilliseconds / 1000)
+          : 0.0;
+
+      _extractMemoriesAsync(userMessage, text, sessionId: sessionId);
+
+      return HamadaResponse(text: text, tokensPerSec: tps, totalTokens: tok);
+
     } on DioException catch (e) {
       _log.e('Groq error', error: e);
       if (e.response?.statusCode == 401) {
@@ -309,21 +295,9 @@ class AiService {
           e.type == DioExceptionType.receiveTimeout) {
         throw Exception('انقطع النت — تأكد من الاتصال وجرّب تاني 📶');
       }
-      throw Exception('حصل خطأ — جرّب تاني بعد شوية');
+      final status = e.response?.statusCode;
+      throw Exception('حصل خطأ ($status) — جرّب تاني بعد شوية');
     }
-
-    sw.stop();
-    final tps = sw.elapsedMilliseconds > 0
-        ? tok / (sw.elapsedMilliseconds / 1000)
-        : 0.0;
-
-    _extractMemoriesAsync(userMessage, buf.toString(), sessionId: sessionId);
-
-    return HamadaResponse(
-      text:         buf.toString().trim(),
-      tokensPerSec: tps,
-      totalTokens:  tok,
-    );
   }
 
   // ── FINANCIAL ANALYSIS ────────────────────────────────────
@@ -497,7 +471,7 @@ class AiService {
         'stream':      false,
       },
     );
-    return (response.data['choices'][0]['message']['content'] as String?)?.trim() ?? '';
+    return (response.data['choices']?[0]?['message']?['content'] as String?)?.trim() ?? '';
   }
 
   Future<List<String>> _getRecentNotes() async {

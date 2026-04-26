@@ -18,7 +18,11 @@ class TasksNotifier extends _$TasksNotifier {
   @override
   Future<Map<String, List<Map<String, dynamic>>>> build() async {
     final db = ref.read(databaseHelperProvider);
-    return {'today': await db.getTodayTasks(), 'overdue': await db.getOverdueTasks()};
+    return {
+      'today':   await db.getTodayTasks(),
+      'overdue': await db.getOverdueTasks(),
+      'pending': await db.getAllTasks(statusFilter: 'pending'),
+    };
   }
 
   Future<void> add({required String title, int priority = 3}) async {
@@ -60,12 +64,15 @@ class PlannerScreen extends ConsumerWidget {
           tabs: const [Tab(text: 'المهام'), Tab(text: 'المواعيد')],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: AppColors.primary, foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: Text('مهمة', style: GoogleFonts.cairo()),
-        onPressed: () => _showAdd(context, ref),
-      ),
+      floatingActionButton: Builder(builder: (ctx) {
+        final tab = DefaultTabController.of(ctx).index;
+        return FloatingActionButton.extended(
+          backgroundColor: AppColors.primary, foregroundColor: Colors.white,
+          icon: const Icon(Icons.add),
+          label: Text(tab == 0 ? 'مهمة' : 'موعد', style: GoogleFonts.cairo()),
+          onPressed: () => _showAdd(context, ref),
+        );
+      }),
       body: TabBarView(children: [_TasksTab(), _AppointmentsTab()]),
     ));
   }
@@ -89,9 +96,16 @@ class _TasksTab extends ConsumerWidget {
       loading: () => const Center(child: CircularProgressIndicator(color: AppColors.primary)),
       error:   (e, _) => Center(child: Text('خطأ: $e')),
       data:    (data) {
-        final overdue = data['overdue'] ?? [];
-        final today   = data['today']   ?? [];
-        if (overdue.isEmpty && today.isEmpty) {
+        final overdue  = data['overdue'] ?? [];
+        final today    = data['today']   ?? [];
+        final allPending = data['pending'] ?? [];
+        // Show tasks without due_date (not in today or overdue)
+        final todayIds   = today.map((t) => t['id']).toSet();
+        final overdueIds = overdue.map((t) => t['id']).toSet();
+        final other = allPending.where((t) =>
+            !todayIds.contains(t['id']) && !overdueIds.contains(t['id'])).toList();
+
+        if (overdue.isEmpty && today.isEmpty && other.isEmpty) {
           return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             const Text('✅', style: TextStyle(fontSize: 52)), const Gap(12),
             Text('مفيش مهام دلوقتي', style: GoogleFonts.cairo(
@@ -107,6 +121,11 @@ class _TasksTab extends ConsumerWidget {
           if (today.isNotEmpty) ...[
             _SectionHeader(title: '📅 اليوم (${today.length})', color: AppColors.primary),
             ...today.map((t) => _TaskTile(task: t, ref: ref)),
+            const Gap(16),
+          ],
+          if (other.isNotEmpty) ...[
+            _SectionHeader(title: '📝 المهام (${other.length})', color: AppColors.textSecondary),
+            ...other.map((t) => _TaskTile(task: t, ref: ref)),
           ],
         ]);
       },
