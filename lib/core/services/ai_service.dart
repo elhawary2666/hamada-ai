@@ -143,7 +143,7 @@ class AiService {
           _apiKey = k;
           _ready  = true;
           aiReadyNotifier.value = true;
-          _log.i('✅ API key loaded from DB');
+          _log.i('✅ API key loaded from DB: ${k.length}chars');
         }
       }
     } catch (e) {
@@ -174,7 +174,7 @@ class AiService {
       _apiKey = k;
       _ready  = true;
       aiReadyNotifier.value = true;
-      _log.i('✅ API key saved and verified in DB');
+      _log.i('✅ API key saved: ready=$_ready, key=${_apiKey.length}chars, notifier=${aiReadyNotifier.value}');
       return true;
     } catch (e) {
       _log.e('Failed to save API key', error: e);
@@ -213,7 +213,20 @@ class AiService {
     required List<Map<String, dynamic>> history,
     void Function(String token)? onToken,
   }) async {
-    _assertReady();
+    // Always re-check key from DB before sending
+    if (_apiKey.isEmpty || !_ready) {
+      await initialize();
+    }
+    if (_apiKey.isEmpty || !_ready) {
+      // Show diagnostic info to help debug
+      final sqlDb = await db.database;
+      List<Map<String,dynamic>> rows = [];
+      try { rows = await sqlDb.query('app_settings'); } catch(e) {
+        throw Exception('DB error: $e');
+      }
+      final keys = rows.map((r) => r['key']).toList();
+      throw Exception('Key مش موجود في DB\nالجداول الموجودة: app_settings\nالمحتوى: $keys\n_ready=$_ready');
+    }
     _checkRateLimit();
 
     final memories = await memoryService.retrieveRelevantMemories(userMessage);
