@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 
-import 'package:dio/dio.dart';
+import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import 'package:logger/logger.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -111,7 +111,7 @@ class AiService {
   final DatabaseHelper db;
   final MemoryService  memoryService;
 
-  final _dio      = Dio(BaseOptions(connectTimeout: const Duration(seconds: 15)));
+  // Using dart:http package directly — more reliable on Android than Dio
 
   final _log      = Logger(printer: PrettyPrinter(methodCount: 0));
   final _rl       = _RateLimiter();
@@ -248,30 +248,36 @@ class AiService {
 
     try {
       _rl.record();
-      final response = await _dio.post(
-        _groqUrl,
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $_apiKey',
-            'Content-Type':  'application/json',
-          },
-          receiveTimeout: const Duration(seconds: 30),
-        ),
-        data: {
+      final httpResponse = await http.post(
+        Uri.parse(_groqUrl),
+        headers: {
+          'Authorization': 'Bearer $_apiKey',
+          'Content-Type':  'application/json',
+        },
+        body: jsonEncode({
           'model':       _model,
           'messages':    messages,
           'stream':      false,
           'max_tokens':  1024,
           'temperature': 0.7,
           'top_p':       0.9,
-        },
-      );
+        }),
+      ).timeout(const Duration(seconds: 30));
 
-      final text = (response.data['choices']?[0]?['message']?['content']
-          as String? ?? '').trim();
-      final tok  = (response.data['usage']?['total_tokens'] as int?) ?? 0;
+      if (httpResponse.statusCode == 401) {
+        throw Exception('API key غلط — روح الإعدادات وعدّله 🔑');
+      }
+      if (httpResponse.statusCode == 429) {
+        throw Exception('وصلت للحد اليومي المجاني — جرّب بكرة 🌙');
+      }
+      if (httpResponse.statusCode != 200) {
+        throw Exception('خطأ (${httpResponse.statusCode}) — جرّب تاني');
+      }
 
-      // Simulate streaming by calling onToken with full text
+      final data = jsonDecode(utf8.decode(httpResponse.bodyBytes));
+      final text = (data['choices']?[0]?['message']?['content'] as String? ?? '').trim();
+      final tok  = (data['usage']?['total_tokens'] as int?) ?? 0;
+
       if (text.isNotEmpty) onToken?.call(text);
 
       sw.stop();
@@ -283,20 +289,15 @@ class AiService {
 
       return HamadaResponse(text: text, tokensPerSec: tps, totalTokens: tok);
 
-    } on DioException catch (e) {
-      _log.e('Groq error', error: e);
-      if (e.response?.statusCode == 401) {
-        throw Exception('API key غلط — روح الإعدادات وعدّله 🔑');
+    } on Exception catch (e) {
+      _log.e('HTTP error', error: e);
+      final msg = e.toString();
+      if (msg.contains('TimeoutException') || msg.contains('timed out')) {
+        throw Exception('انقطع النت أو الاتصال بطيء — جرّب تاني 📶');
       }
-      if (e.response?.statusCode == 429) {
-        throw Exception('وصلت للحد اليومي المجاني — جرّب بكرة 🌙');
-      }
-      if (e.type == DioExceptionType.connectionTimeout ||
-          e.type == DioExceptionType.receiveTimeout) {
-        throw Exception('انقطع النت — تأكد من الاتصال وجرّب تاني 📶');
-      }
-      final status = e.response?.statusCode;
-      throw Exception('حصل خطأ ($status) — جرّب تاني بعد شوية');
+      // Rethrow known errors (401, 429, status codes)
+      if (msg.contains('🔑') || msg.contains('🌙') || msg.contains('خطأ (')) rethrow;
+      throw Exception('مشكلة في الاتصال — تأكد من النت وجرّب تاني 📶');
     }
   }
 
@@ -457,21 +458,23 @@ class AiService {
     int maxTokens = 200, double temperature = 0.3,
   }) async {
     _rl.record();
-    final response = await _dio.post(
-      _groqUrl,
-      options: Options(headers: {
+    final httpResponse = await http.post(
+      Uri.parse(_groqUrl),
+      headers: {
         'Authorization': 'Bearer $_apiKey',
         'Content-Type':  'application/json',
-      }),
-      data: {
+      },
+      body: jsonEncode({
         'model':       _model,
         'messages':    [{'role': 'user', 'content': prompt}],
         'max_tokens':  maxTokens,
         'temperature': temperature,
         'stream':      false,
-      },
-    );
-    return (response.data['choices']?[0]?['message']?['content'] as String?)?.trim() ?? '';
+      }),
+    ).timeout(const Duration(seconds: 20));
+    if (httpResponse.statusCode != 200) return '';
+    final data = jsonDecode(utf8.decode(httpResponse.bodyBytes));
+    return (data['choices']?[0]?['message']?['content'] as String?)?.trim() ?? '';
   }
 
   Future<List<String>> _getRecentNotes() async {
@@ -535,5 +538,5 @@ class AiService {
     }
   }
 
-  Future<void> dispose() async => _dio.close();
+  Future<void> dispose() async {}
 }
