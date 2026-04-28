@@ -78,6 +78,19 @@ class TasksNotifier extends _$TasksNotifier {
     HapticFeedback.lightImpact();
   }
 
+
+  Future<void> editTask(String id, {
+    required String title,
+    String priority  = 'medium',
+    int?   dueDateMs,
+  }) async {
+    await ref.read(databaseHelperProvider).update(Tables.tasks, {
+      'title':    title,
+      'priority': priority,
+      'due_date': dueDateMs,
+    }, id);
+    ref.invalidateSelf();
+  }
   Future<void> deleteTask(String id) async {
     await ref.read(databaseHelperProvider).delete(Tables.tasks, id);
     ref.invalidateSelf();
@@ -287,7 +300,7 @@ class _TaskTile extends ConsumerWidget {
       background: Container(
         alignment: Alignment.centerRight,
         padding:   const EdgeInsets.only(right: 16),
-        color:     AppColors.error.withOpacity(0.2),
+        color:     AppColors.error.withValues(alpha: 0.2),
         child:     const Icon(Icons.delete_outline, color: AppColors.error),
       ),
       child: Container(
@@ -319,6 +332,7 @@ class _TaskTile extends ConsumerWidget {
                   : null,
             ),
           ),
+          onLongPress: () => _showEditTask(context, ref, task),
           title: Text(task['title'] as String,
               style: GoogleFonts.cairo(
                 fontSize: 14,
@@ -337,6 +351,17 @@ class _TaskTile extends ConsumerWidget {
       ),
     );
   }
+}
+
+
+void _showEditTask(BuildContext context, WidgetRef ref, Map<String, dynamic> task) {
+  showModalBottomSheet(
+    context: context, isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (_) => _EditTaskSheet(ref: ref, task: task),
+  );
 }
 
 // ── APPOINTMENTS TAB ──────────────────────────────────────────
@@ -383,7 +408,7 @@ class _AppointmentsTab extends ConsumerWidget {
               background: Container(
                 alignment: Alignment.centerRight,
                 padding:   const EdgeInsets.only(right: 16),
-                color:     AppColors.error.withOpacity(0.2),
+                color:     AppColors.error.withValues(alpha: 0.2),
                 child:     const Icon(Icons.delete_outline,
                     color: AppColors.error),
               ),
@@ -394,7 +419,7 @@ class _AppointmentsTab extends ConsumerWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
                         color: isToday
-                            ? AppColors.primary.withOpacity(0.4)
+                            ? AppColors.primary.withValues(alpha: 0.4)
                             : AppColors.inputBorder,
                         width: isToday ? 1.5 : 0.5)),
                 child: ListTile(
@@ -406,6 +431,7 @@ class _AppointmentsTab extends ConsumerWidget {
                         color:  isToday ? Colors.white : AppColors.textSecondary,
                         size: 18),
                   ),
+                  onLongPress: () => _showEditAppointment(context, ref, a),
                   title: Text(a['title'] as String,
                       style: GoogleFonts.cairo(
                           fontSize: 14, color: AppColors.textPrimary)),
@@ -432,7 +458,7 @@ class _AppointmentsTab extends ConsumerWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.15),
+                              color: AppColors.primary.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(6)),
                           child: Text('اليوم',
                               style: GoogleFonts.cairo(
@@ -510,7 +536,7 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   decoration: BoxDecoration(
                     color: _priority == item.$1
-                        ? item.$3.withOpacity(0.15)
+                        ? item.$3.withValues(alpha: 0.15)
                         : AppColors.surfaceVariant,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
@@ -695,6 +721,247 @@ class _AddAppointmentSheetState extends State<_AddAppointmentSheet> {
             HapticFeedback.lightImpact();
           },
           child: Text('حفظ الموعد', style: GoogleFonts.cairo(fontSize: 16)),
+        )),
+        const Gap(8),
+      ]),
+    ),
+  );
+}
+
+
+void _showEditAppointment(BuildContext context, WidgetRef ref, Map<String, dynamic> appt) {
+  showModalBottomSheet(
+    context: context, isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (_) => _EditAppointmentSheet(ref: ref, appt: appt),
+  );
+}
+
+// ── EDIT TASK SHEET ───────────────────────────────────────────
+
+class _EditTaskSheet extends StatefulWidget {
+  const _EditTaskSheet({required this.ref, required this.task});
+  final WidgetRef ref;
+  final Map<String, dynamic> task;
+  @override
+  State<_EditTaskSheet> createState() => _EditTaskSheetState();
+}
+
+class _EditTaskSheetState extends State<_EditTaskSheet> {
+  late final TextEditingController _ctrl;
+  late String   _priority;
+  DateTime?     _dueDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl     = TextEditingController(text: widget.task['title'] as String? ?? '');
+    _priority = widget.task['priority'] as String? ?? 'medium';
+    final ms  = widget.task['due_date'] as int?;
+    if (ms != null && ms > 0) _dueDate = DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: Container(width: 36, height: 4,
+            decoration: BoxDecoration(
+                color: AppColors.textHint,
+                borderRadius: BorderRadius.circular(2)))),
+        const Gap(16),
+        Text('تعديل المهمة', style: GoogleFonts.cairo(
+            fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+        const Gap(14),
+        TextField(
+          controller: _ctrl, textDirection: TextDirection.rtl, autofocus: true,
+          style: GoogleFonts.cairo(color: AppColors.textPrimary),
+          decoration: InputDecoration(labelText: 'عنوان المهمة'),
+        ),
+        const Gap(14),
+        Text('الأولوية', style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textSecondary)),
+        const Gap(8),
+        Row(children: [
+          for (final item in [
+            ('low', 'عادية', AppColors.success),
+            ('medium', 'متوسطة', AppColors.warning),
+            ('high', 'عالية', AppColors.expense),
+          ])
+            Expanded(child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: GestureDetector(
+                onTap: () => setState(() => _priority = item.$1),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _priority == item.$1
+                        ? item.$3.withValues(alpha: 0.15)
+                        : AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: _priority == item.$1 ? item.$3 : AppColors.inputBorder),
+                  ),
+                  child: Text(item.$2, textAlign: TextAlign.center,
+                      style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: _priority == item.$1 ? item.$3 : AppColors.textSecondary)),
+                ),
+              ),
+            )),
+        ]),
+        const Gap(12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.textSecondary),
+          title: Text(
+            _dueDate == null ? 'تاريخ الاستحقاق (اختياري)' : DateFormat('yyyy/MM/dd').format(_dueDate!),
+            style: GoogleFonts.cairo(
+                fontSize: 13,
+                color: _dueDate == null ? AppColors.textHint : AppColors.textPrimary),
+          ),
+          trailing: _dueDate != null
+              ? GestureDetector(
+                  onTap: () => setState(() => _dueDate = null),
+                  child: const Icon(Icons.clear, size: 16, color: AppColors.textHint))
+              : null,
+          onTap: () async {
+            final d = await showDatePicker(
+              context: context, initialDate: _dueDate ?? DateTime.now(),
+              firstDate: DateTime.now(),
+              lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+              builder: (_, child) => Theme(data: ThemeData.dark(), child: child!),
+            );
+            if (d != null) setState(() => _dueDate = d);
+          },
+        ),
+        const Gap(16),
+        SizedBox(width: double.infinity, child: ElevatedButton(
+          onPressed: () async {
+            if (_ctrl.text.trim().isEmpty) return;
+            await widget.ref.read(tasksNotifierProvider.notifier).editTask(
+              widget.task['id'] as String,
+              title:     _ctrl.text.trim(),
+              priority:  _priority,
+              dueDateMs: _dueDate?.millisecondsSinceEpoch,
+            );
+            if (!mounted) return;
+            Navigator.pop(context);
+            HapticFeedback.lightImpact();
+          },
+          child: Text('حفظ التعديل', style: GoogleFonts.cairo(fontSize: 16)),
+        )),
+        const Gap(8),
+      ]),
+    ),
+  );
+}
+
+// ── EDIT APPOINTMENT SHEET ────────────────────────────────────
+
+class _EditAppointmentSheet extends StatefulWidget {
+  const _EditAppointmentSheet({required this.ref, required this.appt});
+  final WidgetRef ref;
+  final Map<String, dynamic> appt;
+  @override
+  State<_EditAppointmentSheet> createState() => _EditAppointmentSheetState();
+}
+
+class _EditAppointmentSheetState extends State<_EditAppointmentSheet> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _locationCtrl;
+  late DateTime _startTime;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleCtrl    = TextEditingController(text: widget.appt['title'] as String? ?? '');
+    _locationCtrl = TextEditingController(text: widget.appt['location'] as String? ?? '');
+    final ms = widget.appt['start_time'] as int?;
+    _startTime = ms != null
+        ? DateTime.fromMillisecondsSinceEpoch(ms)
+        : DateTime.now().add(const Duration(hours: 1));
+  }
+
+  @override
+  void dispose() { _titleCtrl.dispose(); _locationCtrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+    child: Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: Container(width: 36, height: 4,
+            decoration: BoxDecoration(color: AppColors.textHint, borderRadius: BorderRadius.circular(2)))),
+        const Gap(16),
+        Text('تعديل الموعد', style: GoogleFonts.cairo(
+            fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+        const Gap(14),
+        TextField(
+          controller: _titleCtrl, textDirection: TextDirection.rtl, autofocus: true,
+          style: GoogleFonts.cairo(color: AppColors.textPrimary),
+          decoration: InputDecoration(labelText: 'عنوان الموعد'),
+        ),
+        const Gap(10),
+        TextField(
+          controller: _locationCtrl, textDirection: TextDirection.rtl,
+          style: GoogleFonts.cairo(color: AppColors.textPrimary),
+          decoration: InputDecoration(
+            labelText: 'المكان (اختياري)',
+            prefixIcon: const Icon(Icons.location_on_outlined, size: 18, color: AppColors.textSecondary),
+          ),
+        ),
+        const Gap(12),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.access_time_outlined, size: 18, color: AppColors.textSecondary),
+          title: Text(DateFormat('yyyy/MM/dd  HH:mm').format(_startTime),
+              style: GoogleFonts.cairo(fontSize: 14, color: AppColors.textPrimary)),
+          onTap: () async {
+            final d = await showDatePicker(
+              context: context, initialDate: _startTime,
+              firstDate: DateTime.now(),
+              lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+              builder: (_, child) => Theme(data: ThemeData.dark(), child: child!),
+            );
+            if (d == null || !mounted) return;
+            final t = await showTimePicker(
+              context: context, initialTime: TimeOfDay.fromDateTime(_startTime),
+              builder: (_, child) => Theme(data: ThemeData.dark(), child: child!),
+            );
+            if (t != null) setState(() => _startTime = DateTime(d.year, d.month, d.day, t.hour, t.minute));
+          },
+        ),
+        const Gap(16),
+        SizedBox(width: double.infinity, child: ElevatedButton(
+          onPressed: () async {
+            final title = _titleCtrl.text.trim();
+            if (title.isEmpty) return;
+            await widget.ref.read(databaseHelperProvider).update(
+              Tables.appointments,
+              {
+                'title':      title,
+                'location':   _locationCtrl.text.trim(),
+                'start_time': _startTime.millisecondsSinceEpoch,
+              },
+              widget.appt['id'] as String,
+            );
+            widget.ref.invalidate(appointmentsProvider);
+            if (!mounted) return;
+            Navigator.pop(context);
+            HapticFeedback.lightImpact();
+          },
+          child: Text('حفظ التعديل', style: GoogleFonts.cairo(fontSize: 16)),
         )),
         const Gap(8),
       ]),

@@ -1,24 +1,32 @@
 // lib/features/chat/providers/chat_provider.dart
-import 'dart:async';
 import 'dart:convert';
-
 
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:uuid/uuid.dart';
 
-
 import '../../../core/di/providers.dart';
+import '../../finance/providers/finance_provider.dart';
+import '../../planner/presentation/planner_screen.dart';
+import '../../notes/presentation/notes_screen.dart';
+import '../../habits/presentation/habits_screen.dart';
 import '../../../core/services/ai_service.dart';
 import '../data/chat_repository.dart';
 import '../domain/models/chat_message_model.dart';
 
 part 'chat_provider.g.dart';
 
-// ── Context Window Management ─────────────────────────────────
-const _kMaxContextMessages = 20;   // max messages sent to AI
-const _kMaxContextTokens   = 6000; // rough token estimate guard
+const _kMaxContextMessages = 20;
+const _kMaxContextTokens   = 6000;
 
 enum ChatStatus { idle, thinking, streaming, error }
+
+// ✅ IMPROVEMENT 2: Pending action awaiting user confirmation
+class PendingAction {
+  final String              action;
+  final Map<String, dynamic> data;
+  final String              preview; // human-readable description
+  const PendingAction({required this.action, required this.data, required this.preview});
+}
 
 class ChatState {
   final List<ChatMessageModel> messages;
@@ -29,16 +37,20 @@ class ChatState {
   final double                 tokensPerSec;
   final bool                   isModelReady;
   final List<String>           suggestedReplies;
+  final PendingAction?         pendingAction;   // ✅ IMPROVEMENT 2
+  final String?                conversationSummary; // ✅ IMPROVEMENT 1
 
   const ChatState({
-    this.messages         = const [],
-    this.status           = ChatStatus.idle,
-    this.streamingBuffer  = '',
+    this.messages              = const [],
+    this.status                = ChatStatus.idle,
+    this.streamingBuffer       = '',
     this.errorMessage,
     required this.sessionId,
-    this.tokensPerSec     = 0,
-    this.isModelReady     = false,
-    this.suggestedReplies = const [],
+    this.tokensPerSec          = 0,
+    this.isModelReady          = false,
+    this.suggestedReplies      = const [],
+    this.pendingAction,
+    this.conversationSummary,
   });
 
   bool get isGenerating =>
@@ -49,20 +61,24 @@ class ChatState {
     ChatStatus?             status,
     String?                 streamingBuffer,
     String?                 errorMessage,
-    bool                    clearError = false,
+    bool                    clearError        = false,
     double?                 tokensPerSec,
     bool?                   isModelReady,
     List<String>?           suggestedReplies,
+    PendingAction?          pendingAction,
+    bool                    clearPending      = false,
+    String?                 conversationSummary,
   }) => ChatState(
-    messages:         messages         ?? this.messages,
-    status:           status           ?? this.status,
-    streamingBuffer:  streamingBuffer  ?? this.streamingBuffer,
-    // ✅ FIX Bug #6: Only clear errorMessage when explicitly requested
-    errorMessage:     clearError ? null : (errorMessage ?? this.errorMessage),
-    sessionId:        sessionId,
-    tokensPerSec:     tokensPerSec     ?? this.tokensPerSec,
-    isModelReady:     isModelReady     ?? this.isModelReady,
-    suggestedReplies: suggestedReplies ?? this.suggestedReplies,
+    messages:            messages            ?? this.messages,
+    status:              status              ?? this.status,
+    streamingBuffer:     streamingBuffer     ?? this.streamingBuffer,
+    errorMessage:        clearError ? null   : (errorMessage ?? this.errorMessage),
+    sessionId:           sessionId,
+    tokensPerSec:        tokensPerSec        ?? this.tokensPerSec,
+    isModelReady:        isModelReady        ?? this.isModelReady,
+    suggestedReplies:    suggestedReplies    ?? this.suggestedReplies,
+    pendingAction:       clearPending ? null : (pendingAction ?? this.pendingAction),
+    conversationSummary: conversationSummary ?? this.conversationSummary,
   );
 }
 
@@ -84,7 +100,6 @@ class ChatNotifier extends _$ChatNotifier {
   Future<void> initAiService() async {
     final ai = ref.read(aiServiceProvider);
     await ai.initialize();
-    // Also check aiReadyNotifier in case key was set before this call
     final ready = ai.isReady || aiReadyNotifier.value;
     if (ready && !ai.isReady) await ai.initialize();
     state = state.copyWith(isModelReady: ai.isReady);
@@ -92,7 +107,6 @@ class ChatNotifier extends _$ChatNotifier {
 
   Future<void> refreshReadyState() async {
     final ai = ref.read(aiServiceProvider);
-    // Re-initialize to reload key from DB in case it was saved after first init
     await ai.initialize();
     state = state.copyWith(isModelReady: ai.isReady);
   }
@@ -107,33 +121,46 @@ class ChatNotifier extends _$ChatNotifier {
     }
   }
 
-  // ── CONTEXT WINDOW MANAGEMENT ─────────────────────────────
-
+  // ✅ IMPROVEMENT 1: Context with summary of old messages
   List<Map<String, dynamic>> _buildContextHistory() {
     final msgs = state.messages
         .where((m) => !m.isEmpty && !m.isError)
         .toList();
 
-    // Take last N messages
-    final recent = msgs.length > _kMaxContextMessages
-        ? msgs.sublist(msgs.length - _kMaxContextMessages)
-        : msgs;
+    // Keep last 15 messages in full
+    const kRecent = 15;
+    final recent = msgs.length > kRecent ? msgs.sublist(msgs.length - kRecent) : msgs;
+    final history = recent.map((m) => {'role': m.role, 'content': m.content}).toList();
 
-    // Rough token estimation (4 chars ≈ 1 token)
-    var totalChars = 0;
-    final trimmed  = <ChatMessageModel>[];
-    for (final m in recent.reversed) {
-      totalChars += m.content.length;
-      if (totalChars > _kMaxContextTokens * 4) break;
-      trimmed.insert(0, m);
+    // Prepend summary of older messages if available
+    if (state.conversationSummary != null && msgs.length > kRecent) {
+      history.insert(0, {
+        'role':    'system',
+        'content': '[ملخص المحادثة السابقة]\n${state.conversationSummary}\n[نهاية الملخص]',
+      });
     }
-
-    return trimmed
-        .map((m) => {'role': m.role, 'content': m.content})
-        .toList();
+    return history;
   }
 
-  // ── SEND ──────────────────────────────────────────────────
+  // Trigger summarization when messages exceed threshold
+  void _maybeSummarize() {
+    final msgs = state.messages.where((m) => !m.isEmpty && !m.isError).toList();
+    // Every 20 messages, summarize the older half
+    if (msgs.length > 0 && msgs.length % 20 == 0) {
+      Future.microtask(() async {
+        try {
+          final ai = ref.read(aiServiceProvider);
+          if (!ai.isReady) return;
+          final oldMsgs = msgs.sublist(0, msgs.length - 10);
+          final history = oldMsgs.map((m) => {'role': m.role, 'content': m.content}).toList();
+          final summary = await ai.summarizeConversation(history);
+          if (summary.isNotEmpty) {
+            state = state.copyWith(conversationSummary: summary);
+          }
+        } catch (_) {}
+      });
+    }
+  }
 
   Future<void> sendMessage(String text) async {
     final trimmed = text.trim();
@@ -142,12 +169,9 @@ class ChatNotifier extends _$ChatNotifier {
     final ai   = ref.read(aiServiceProvider);
     final repo = ref.read(chatRepositoryProvider);
 
-    // Refresh ready state in case key was saved after init
     if (!state.isModelReady && ai.isReady) {
       state = state.copyWith(isModelReady: true);
     }
-
-    // Clear suggestions when user sends
     state = state.copyWith(suggestedReplies: []);
 
     final userMsg = ChatMessageModel.user(
@@ -165,7 +189,6 @@ class ChatNotifier extends _$ChatNotifier {
 
     try {
       final history = _buildContextHistory();
-
       String buf = '';
       final response = await ai.chat(
         userMessage: trimmed,
@@ -173,8 +196,9 @@ class ChatNotifier extends _$ChatNotifier {
         history:     history,
         onToken: (token) {
           buf += token;
+          final displayText = buf.startsWith('{') ? '...جاري التنفيذ' : buf;
           final updated = List<ChatMessageModel>.from(state.messages);
-          updated[updated.length - 1] = placeholder.copyWith(content: buf);
+          updated[updated.length - 1] = placeholder.copyWith(content: displayText);
           state = state.copyWith(
             messages:        updated,
             status:          ChatStatus.streaming,
@@ -183,8 +207,9 @@ class ChatNotifier extends _$ChatNotifier {
         },
       );
 
-      final finalMsg = placeholder.copyWith(
-          content: response.text, tokensPerSec: response.tokensPerSec);
+      final displayText = _extractUserMessage(response.text);
+      final finalMsg    = placeholder.copyWith(
+          content: displayText, tokensPerSec: response.tokensPerSec);
       await repo.saveMessage(finalMsg);
 
       final finalMsgs = List<ChatMessageModel>.from(state.messages);
@@ -198,10 +223,9 @@ class ChatNotifier extends _$ChatNotifier {
         clearError:      true,
       );
 
-      // Generate suggested replies async
-      _generateSuggestions(trimmed, response.text);
-      // Parse and execute Function Calling from AI response
-      _parseFunctionCallAndExecute(response.text);
+      _generateSuggestions(trimmed, displayText);
+      _maybeSummarize(); // ✅ IMPROVEMENT 1
+      _parseFunctionCallAndExecute(response.text, trimmed);
 
     } catch (e) {
       final errMsg = placeholder.copyWith(
@@ -216,19 +240,15 @@ class ChatNotifier extends _$ChatNotifier {
     }
   }
 
-  // ── SUGGESTED REPLIES ─────────────────────────────────────
-
   void _generateSuggestions(String userMsg, String aiReply) {
     Future.microtask(() async {
       try {
         final ai = ref.read(aiServiceProvider);
         if (!ai.isReady) return;
-
         final prompt =
             'بناءً على رد حماده ده:\n"${aiReply.substring(0, aiReply.length.clamp(0, 200))}"\n\n'
             'اقترح 3 ردود قصيرة يمكن يقولها المستخدم (كل رد في سطر، بدون نقاط أو أرقام، '
             'كل رد أقل من 6 كلمات بالعربي المصري فقط)';
-
         final result = await ai.singleShot(prompt, maxTokens: 60);
         final lines  = result
             .split('\n')
@@ -236,15 +256,12 @@ class ChatNotifier extends _$ChatNotifier {
             .where((l) => l.isNotEmpty && l.length < 50)
             .take(3)
             .toList();
-
         if (lines.isNotEmpty) {
           state = state.copyWith(suggestedReplies: lines);
         }
       } catch (_) {}
     });
   }
-
-  // ── SESSION ────────────────────────────────────────────────
 
   Future<void> startNewSession() async {
     final sid = _uuid.v4();
@@ -256,8 +273,7 @@ class ChatNotifier extends _$ChatNotifier {
     final repo = ref.read(chatRepositoryProvider);
     final msgs = await repo.getSessionMessages(sid);
     state = ChatState(
-        sessionId: sid, messages: msgs,
-        isModelReady: state.isModelReady);
+        sessionId: sid, messages: msgs, isModelReady: state.isModelReady);
   }
 
   void dismissSuggestion(int index) {
@@ -269,14 +285,10 @@ class ChatNotifier extends _$ChatNotifier {
   void clearError() => state = state.copyWith(
       status: ChatStatus.idle, clearError: true);
 
-  // ✅ FIX Bug #2: Stop button — actually cancels the generating state
   void cancelGeneration() {
     if (!state.isGenerating) return;
-    // Remove the empty placeholder bubble that was being filled
     final msgs = List<ChatMessageModel>.from(state.messages);
-    if (msgs.isNotEmpty && msgs.last.isEmpty) {
-      msgs.removeLast();
-    }
+    if (msgs.isNotEmpty && msgs.last.isEmpty) msgs.removeLast();
     state = state.copyWith(
       messages:        msgs,
       status:          ChatStatus.idle,
@@ -285,161 +297,381 @@ class ChatNotifier extends _$ChatNotifier {
     );
   }
 
-  // ── FUNCTION CALLING — JSON Parser & Executor ─────────────
+  // ── FUNCTION CALLING — Layer 1A: Retry Logic ──────────────
 
-  /// يـparse الـ JSON اللي بيرجعه حماده وينفذ الـ action على الـ DB
-  void _parseFunctionCallAndExecute(String aiResponse) {
+  // Keywords that indicate the user is asking for an action
+  static const _commandKeywords = [
+    'صرفت','دفعت','اشتريت','استلمت','مرتب','راتب','دخل','اكتب','سجل',
+    'احفظ','ملاحظة','فكرة','مهمة','عندي','محتاج','فاكرني','موعد','اجتماع',
+    'حجز','عادة','ابدأ','هعمل','ذكرني','ميزانية','حد أقصى','قسّم','الحساب',
+    'صاحبي','فلان','بيحب','عنده',
+  ];
+
+  bool _looksLikeCommand(String msg) {
+    final lower = msg.toLowerCase();
+    return _commandKeywords.any((k) => lower.contains(k));
+  }
+
+  void _parseFunctionCallAndExecute(String aiResponse, String originalUserMsg) {
     Future.microtask(() async {
       try {
-        final parsed = _tryParseActionJson(aiResponse);
-        if (parsed == null) return; // مش function call — رد عادي
+        var parsed = _tryParseActionJson(aiResponse);
 
-        final action = parsed['action'] as String?;
-        final data   = parsed['data']   as Map<String, dynamic>?;
-        if (action == null || data == null) return;
+        // ✅ Layer 1A: retry ONLY if message looks like a command
+        if (parsed == null && _looksLikeCommand(originalUserMsg)) {
+          parsed = await _retryFunctionCall(originalUserMsg, aiResponse);
+        }
+        if (parsed == null) return;
 
         final db  = ref.read(databaseHelperProvider);
         final now = DateTime.now().millisecondsSinceEpoch;
-        final id  = _uuid.v4();  // ✅ UUID — no collision risk
 
-        switch (action) {
-          case 'add_transaction':
-            await _executeAddTransaction(db, data, id, now);
-            break;
-          case 'add_task':
-            await _executeAddTask(db, data, id, now);
-            break;
-          case 'add_note':
-            await _executeAddNote(db, data, id, now);
-            break;
-          case 'add_appointment':
-            await _executeAddAppointment(db, data, id, now);
-            break;
+        // ✅ FIX A: support both single action AND actions array
+        // e.g. {"actions":[{...},{...}],"message":"..."} for multiple transactions
+        final actionsRaw = parsed['actions'];
+        if (actionsRaw is List && actionsRaw.isNotEmpty) {
+          // Multiple actions in one message
+          for (final item in actionsRaw) {
+            if (item is! Map<String, dynamic>) continue;
+            final action = item['action'] as String?;
+            final data   = item['data']   as Map<String, dynamic>?;
+            if (action == null || data == null) continue;
+            await _dispatchAction(action, data, db, _uuid.v4(), now);
+          }
+          return;
         }
+
+        // Single action (original format)
+        final action = parsed['action'] as String?;
+        final data   = parsed['data']   as Map<String, dynamic>?;
+        if (action == null || data == null) return;
+        await _dispatchAction(action, data, db, _uuid.v4(), now);
+
       } catch (_) {}
     });
   }
 
-  /// يحاول يـparse الـ JSON — بيرجع null لو مش action
+  Future<void> _dispatchAction(
+    String action,
+    Map<String, dynamic> data,
+    dynamic db,
+    String id,
+    int now,
+  ) async {
+    switch (action) {
+      case 'add_transaction':
+        await _executeAddTransaction(db, data, id, now);
+        break;
+      case 'add_task':
+        await _executeAddTask(db, data, id, now);
+        break;
+      case 'add_note':
+        await _executeAddNote(db, data, id, now);
+        break;
+      case 'add_appointment':
+        await _executeAddAppointment(db, data, id, now);
+        break;
+      case 'log_habit':
+        await _executeLogHabit(db, data, id, now);
+        break;
+      case 'add_habit':
+        await _executeAddHabit(db, data, id, now);
+        break;
+      case 'set_budget':
+        await _executeSetBudget(db, data, id, now);
+        break;
+      case 'add_relationship_note':
+        await _executeAddRelationshipNote(db, data, id, now);
+        break;
+      case 'split_bill':
+        await _executeSplitBill(db, data, id, now);
+        break;
+    }
+  }
+
+  /// ✅ Layer 1A: retry with a strict JSON-only prompt
+  Future<Map<String, dynamic>?> _retryFunctionCall(
+      String userMsg, String badResponse) async {
+    try {
+      final ai = ref.read(aiServiceProvider);
+      if (!ai.isReady) return null;
+
+      final retryPrompt =
+          'الرد السابق كان غلط. المستخدم قال: "$userMsg"\n'
+          'الرد السابق كان: "$badResponse"\n'
+          'لو في طلب تنفيذ (إضافة معاملة/مهمة/ملاحظة/موعد/عادة/ميزانية)، '
+          'ارجع JSON فقط بالشكل ده:\n'
+          '{"action":"...","data":{...},"message":"..."}\n'
+          'لو مفيش طلب تنفيذ، ارجع: null';
+
+      final result = await ai.singleShot(retryPrompt, maxTokens: 300);
+      if (result.trim() == 'null' || result.trim().isEmpty) return null;
+      return _tryParseActionJson(result);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Map<String, dynamic>? _tryParseActionJson(String raw) {
     try {
-      // شيل أي whitespace في الأول أو الآخر
-      final trimmed = raw.trim();
-
-      // لازم يبدأ بـ { عشان يكون JSON
-      if (!trimmed.startsWith('{')) return null;
-
-      // شيل code fences لو موجودة
-      final clean = trimmed
-          .replaceAll('```json', '')
-          .replaceAll('```', '')
-          .trim();
-
-      final s = clean.indexOf('{');
+      // ✅ FIX: search for JSON anywhere in response, not just prefix
+      final clean = raw.replaceAll('```json', '').replaceAll('```', '');
+      final s = clean.indexOf('{"action"');
+      if (s == -1) {
+        // also try generic { with action key somewhere inside
+        final s2 = clean.indexOf('{');
+        if (s2 == -1) return null;
+        final e2 = clean.lastIndexOf('}');
+        if (e2 <= s2) return null;
+        final decoded2 = json.decode(clean.substring(s2, e2 + 1));
+        if (decoded2 is! Map<String, dynamic>) return null;
+        if (!decoded2.containsKey('action') || !decoded2.containsKey('data')) return null;
+        return decoded2;
+      }
       final e = clean.lastIndexOf('}');
-      if (s == -1 || e <= s) return null;
-
+      if (e <= s) return null;
       final decoded = json.decode(clean.substring(s, e + 1));
       if (decoded is! Map<String, dynamic>) return null;
       if (!decoded.containsKey('action') || !decoded.containsKey('data')) return null;
-
       return decoded;
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> _executeAddTransaction(
-    dynamic db, Map<String, dynamic> data, String id, int now,
-  ) async {
-    final amount = _toDouble(data['amount']);
-    if (amount == null || amount <= 0) return;
+  String _extractUserMessage(String raw) {
+    final parsed = _tryParseActionJson(raw);
+    if (parsed == null) return raw;
+    final msg = parsed['message'] as String?;
+    if (msg != null && msg.trim().isNotEmpty) return msg.trim();
+    final action = parsed['action'] as String?;
+    switch (action) {
+      case 'add_transaction':       return 'تمام، سجلت المعاملة ✅';
+      case 'add_task':              return 'حطيت المهمة في قايمتك ✅';
+      case 'add_note':              return 'سجلت الملاحظة ✅';
+      case 'add_appointment':       return 'حجزت الموعد ✅';
+      case 'log_habit':             return 'سجلت العادة ✅';
+      case 'add_habit':             return 'أضفت عادة جديدة ✅';
+      case 'set_budget':            return 'ضبطت الميزانية ✅';
+      case 'add_relationship_note': return 'حفظت الملاحظة ✅';
+      case 'split_bill':            return 'قسّمت الحساب ✅';
+      default:                      return 'تمام ✅';
+    }
+  }
 
-    final type     = (data['type'] as String?)?.trim() ?? 'expense';
+  // ── EXECUTORS ─────────────────────────────────────────────
+
+  static const _kConfirmThreshold = 200.0; // ج.م
+
+  Future<void> _executeAddTransaction(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final amount = _toDouble(data['amount'])?.abs();
+    if (amount == null || amount <= 0) return;
+    final rawType  = (data['type'] as String?)?.trim().toLowerCase() ?? 'expense';
     final category = (data['category'] as String?)?.trim() ?? 'أخرى';
     final desc     = (data['description'] as String?)?.trim() ?? '';
 
-    // Validate type
-    final validType = (type == 'income' || type == 'expense') ? type : 'expense';
+    String validType;
+    if (rawType == 'income' || rawType == 'دخل' || rawType == 'مرتب' || rawType == 'راتب') {
+      validType = 'income';
+    } else {
+      validType = 'expense';
+    }
 
+    // ✅ IMPROVEMENT 2: confirm before saving large transactions
+    if (amount >= _kConfirmThreshold && validType == 'expense') {
+      final typeAr = validType == 'income' ? 'دخل' : 'مصروف';
+      final preview = '$typeAr ${amount.toStringAsFixed(0)} ج.م — $category'
+          '${desc.isNotEmpty ? " ($desc)" : ""}';
+      state = state.copyWith(
+        pendingAction: PendingAction(
+          action:  'add_transaction',
+          data:    {'amount': amount, 'type': validType, 'category': category,
+                    'description': desc, 'id': id, 'now': now},
+          preview: preview,
+        ),
+      );
+      return; // wait for user to confirm
+    }
+
+    await _saveTransaction(db, id, validType, amount, category, desc, now);
+  }
+
+  Future<void> _saveTransaction(dynamic db, String id, String type,
+      double amount, String category, String desc, int now) async {
     await db.insert('finance_transactions', {
-      'id':             id,
-      'type':           validType,
-      'amount':         amount,
-      'currency':       'EGP',
-      'category':       category,
-      'ai_category':    category,
-      'description':    desc,
-      'date':           now,
-      'is_recurring':   0,
-      'recurring_id':   null,
-      'payment_method': 'cash',
-      'created_at':     now,
+      'id': id, 'type': type, 'amount': amount, 'currency': 'EGP',
+      'category': category, 'ai_category': category, 'description': desc,
+      'date': now, 'is_recurring': 0, 'recurring_id': null,
+      'payment_method': 'cash', 'created_at': now,
     });
+    ref.invalidate(financeNotifierProvider);
+  }
+
+  /// ✅ IMPROVEMENT 2: User confirmed the pending action
+  Future<void> confirmPendingAction() async {
+    final pending = state.pendingAction;
+    if (pending == null) return;
+    state = state.copyWith(clearPending: true);
+
+    final db   = ref.read(databaseHelperProvider);
+    final data = pending.data;
+
+    if (pending.action == 'add_transaction') {
+      await _saveTransaction(
+        db,
+        data['id']          as String,
+        data['type']        as String,
+        (data['amount']     as num).toDouble(),
+        data['category']    as String,
+        data['description'] as String? ?? '',
+        data['now']         as int,
+      );
+      // Show confirmation in chat
+      _appendAssistant('تمام، سجلت ${pending.preview} ✅ والكلام ده بيني وبينك 🔒');
+    }
+  }
+
+  /// ✅ IMPROVEMENT 2: User rejected the pending action
+  void rejectPendingAction() {
+    state = state.copyWith(clearPending: true);
+    _appendAssistant('تمام، ما سجلتش حاجة 👍');
   }
 
   Future<void> _executeAddTask(
-    dynamic db, Map<String, dynamic> data, String id, int now,
-  ) async {
-    final title    = (data['title'] as String?)?.trim() ?? '';
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final title = (data['title'] as String?)?.trim() ?? '';
     if (title.isEmpty) return;
-
     final priority = _normalizePriority(data['priority'] as String?);
     final dueDate  = _parseDueDate(data['due_date'] as String?);
-
     await db.insert('tasks', {
-      'id':          id,
-      'title':       title,
+      'id': id, 'title': title,
       'description': (data['description'] as String?)?.trim() ?? '',
-      'due_date':    dueDate,
-      'priority':    priority,
-      'status':      'pending',
-      'created_at':  now,
+      'due_date': dueDate, 'priority': priority,
+      'status': 'pending', 'created_at': now,
     });
+    // ✅ Layer 1B
+    ref.invalidate(tasksNotifierProvider);
   }
 
   Future<void> _executeAddNote(
-    dynamic db, Map<String, dynamic> data, String id, int now,
-  ) async {
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
     final content = (data['content'] as String?)?.trim() ?? '';
     if (content.isEmpty) return;
-
     final title = (data['title'] as String?)?.trim() ?? '';
-
     await db.insert('user_notes', {
-      'id':         id,
-      'title':      title,
-      'content':    content,
-      'tags':       '[]',
-      'color':      'default',
-      'is_pinned':  0,
-      'created_at': now,
-      'updated_at': now,
+      'id': id, 'title': title.isEmpty ? null : title, 'content': content,
+      'tags': '[]', 'color': 'default', 'is_pinned': 0,
+      'created_at': now, 'updated_at': now,
     });
+    // ✅ Layer 1B
+    ref.invalidate(notesNotifierProvider);
   }
 
   Future<void> _executeAddAppointment(
-    dynamic db, Map<String, dynamic> data, String id, int now,
-  ) async {
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
     final title = (data['title'] as String?)?.trim() ?? '';
     if (title.isEmpty) return;
-
     final startTimeStr = data['start_time'] as String?;
     int startTime = now;
     if (startTimeStr != null && startTimeStr.isNotEmpty) {
-      try {
-        startTime = DateTime.parse(startTimeStr).millisecondsSinceEpoch;
-      } catch (_) {}
+      try { startTime = DateTime.parse(startTimeStr).millisecondsSinceEpoch; } catch (_) {}
     }
-
     await db.insert('appointments', {
-      'id':          id,
-      'title':       title,
+      'id': id, 'title': title,
       'description': (data['description'] as String?)?.trim() ?? '',
-      'start_time':  startTime,
-      'end_time':    null,
-      'location':    (data['location'] as String?)?.trim() ?? '',
-      'created_at':  now,
+      'start_time': startTime, 'end_time': null,
+      'location': (data['location'] as String?)?.trim() ?? '',
+      'created_at': now,
+    });
+    // ✅ Layer 1B
+    ref.invalidate(appointmentsProvider);
+  }
+
+  Future<void> _executeLogHabit(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final name = (data['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) return;
+    // Find or create habit
+    var habit = await db.getHabitByName(name);
+    String habitId;
+    if (habit == null) {
+      habitId = _uuid.v4();
+      await db.insert('habits', {
+        'id': habitId, 'name': name, 'icon': data['icon'] as String? ?? '⭐',
+        'frequency': 'daily', 'target_days': 7, 'created_at': now,
+      });
+    } else {
+      habitId = habit['id'] as String;
+    }
+    final today = _dateStr(DateTime.now());
+    await db.logHabit(habitId, today, id, now);
+    ref.invalidate(habitsNotifierProvider);
+  }
+
+  Future<void> _executeAddHabit(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final name = (data['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) return;
+    await db.insert('habits', {
+      'id': id, 'name': name,
+      'icon': data['icon'] as String? ?? '⭐',
+      'frequency': data['frequency'] as String? ?? 'daily',
+      'target_days': (data['target_days'] as num?)?.toInt() ?? 7,
+      'created_at': now,
+    });
+    ref.invalidate(habitsNotifierProvider);
+  }
+
+  Future<void> _executeSetBudget(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final category = (data['category'] as String?)?.trim() ?? '';
+    final amount   = _toDouble(data['amount']);
+    if (category.isEmpty || amount == null || amount <= 0) return;
+    final d = DateTime.now();
+    await db.setBudget(category, amount, d.year, d.month);
+    ref.invalidate(financeNotifierProvider);
+  }
+
+  Future<void> _executeAddRelationshipNote(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final note = (data['note'] as String?)?.trim() ?? '';
+    if (name.isEmpty || note.isEmpty) return;
+    // Find or create relationship
+    var rel = await db.getRelationshipByName(name);
+    if (rel == null) {
+      await db.insert('relationships', {
+        'id': id, 'name': name,
+        'relation': data['relation'] as String? ?? '',
+        'notes': '[]', 'birthday': null, 'last_contact': now,
+        'created_at': now,
+      });
+      await db.addNoteToRelationship(id, note);
+    } else {
+      await db.addNoteToRelationship(rel['id'] as String, note);
+    }
+  }
+
+  Future<void> _executeSplitBill(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final title  = (data['title'] as String?)?.trim() ?? 'حساب';
+    final total  = _toDouble(data['total']);
+    if (total == null || total <= 0) return;
+    final people = (data['people'] as List<dynamic>?)
+        ?.map((p) => p.toString())
+        .toList() ?? [];
+    if (people.isEmpty) return;
+    final perPerson = total / people.length;
+    // ✅ FIX: use jsonEncode for safe serialization — handles names with quotes/backslashes
+    final payersList = people.map((p) => {
+      'name':   p,
+      'amount': double.parse(perPerson.toStringAsFixed(2)),
+      'paid':   false,
+    }).toList();
+    await db.insert('bill_splits', {
+      'id': id, 'title': title, 'total_amount': total,
+      'payers': json.encode(payersList), 'created_at': now,
     });
   }
 
@@ -463,10 +695,11 @@ class ChatNotifier extends _$ChatNotifier {
 
   int? _parseDueDate(String? dateStr) {
     if (dateStr == null || dateStr.isEmpty) return null;
-    try {
-      return DateTime.parse(dateStr).millisecondsSinceEpoch;
-    } catch (_) { return null; }
+    try { return DateTime.parse(dateStr).millisecondsSinceEpoch; } catch (_) { return null; }
   }
+
+  String _dateStr(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
 
   void _appendAssistant(String text) {
     final msg = ChatMessageModel.assistant(

@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/di/providers.dart';
+import '../../relationships/presentation/relationships_screen.dart';
 import '../../chat/providers/chat_provider.dart';
 import '../../../core/router/app_router.dart';
 import '../../../core/services/ai_service.dart'; // includes aiReadyNotifier
@@ -43,6 +44,79 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             fontSize: 18, fontWeight: FontWeight.bold)),
       ),
       body: ListView(padding: const EdgeInsets.all(16), children: [
+
+        _Section(title: '👥 العلاقات', children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Text('👥', style: TextStyle(fontSize: 22)),
+            title: Text('علاقاتي', style: GoogleFonts.cairo(
+                fontSize: 14, color: AppColors.textPrimary)),
+            subtitle: Text('الناس المهمين في حياتك وملاحظاتك عنهم',
+                style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary)),
+            trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const RelationshipsScreen())),
+          ),
+        ]),
+        const Gap(12),
+
+        _Section(title: '📊 التقارير', children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Text('📊', style: TextStyle(fontSize: 22)),
+            title: Text('تقرير أسبوعي مالي',
+                style: GoogleFonts.cairo(fontSize: 14, color: AppColors.textPrimary)),
+            subtitle: Text('تحليل مصروفاتك لآخر 7 أيام',
+                style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary)),
+            trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
+            onTap: () async {
+              final ai = ref.read(aiServiceProvider);
+              if (!ai.isReady) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('محتاج API key أول', style: GoogleFonts.cairo()),
+                  backgroundColor: AppColors.warning,
+                ));
+                return;
+              }
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (_) => Center(child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const CircularProgressIndicator(color: AppColors.primary),
+                    const Gap(16),
+                    Text('بيعمل التقرير...', style: GoogleFonts.cairo(color: AppColors.textPrimary)),
+                  ]),
+                )),
+              );
+              final report = await ai.generateWeeklyReport();
+              if (context.mounted) Navigator.pop(context);
+              if (context.mounted) {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    backgroundColor: AppColors.surface,
+                    title: Text('📊 التقرير الأسبوعي', style: GoogleFonts.cairo(
+                        color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+                    content: SingleChildScrollView(
+                      child: Text(report, style: GoogleFonts.cairo(
+                          fontSize: 13, color: AppColors.textSecondary, height: 1.6)),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text('تمام', style: GoogleFonts.cairo(color: AppColors.primary)),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            },
+          ),
+        ]),
+        const Gap(12),
 
         _Section(title: '🤖 حماده AI', children: [
           _InfoTile(label: 'النموذج',  value: ai.activeModelName),
@@ -273,7 +347,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const Gap(12),
 
         _Section(title: 'ℹ️ عن حماده AI', children: [
-          _InfoTile(label: 'الإصدار', value: '2.0.0'),
+          _InfoTile(label: 'الإصدار', value: '2.1.0'),
           _InfoTile(label: 'الموديل', value: 'Llama 3.3 70B via Groq'),
           _InfoTile(label: 'الميزات', value: 'Voice • Backup • Goals • Recurring'),
           const Gap(8),
@@ -307,7 +381,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       });
       _keyCtrl.clear();
     } catch (_) {
-      setState(() { _saving = false; _keyMsg = '❌ حصل خطأ'; });
+      if (mounted) setState(() { _saving = false; _keyMsg = '❌ حصل خطأ'; });
     }
   }
 

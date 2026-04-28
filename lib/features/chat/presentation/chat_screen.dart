@@ -143,6 +143,13 @@ class ChatScreen extends HookConsumerWidget {
           isFiltered: searchQuery.value.isNotEmpty,
         )),
         if (chat.tokensPerSec > 0) _TpsBar(tps: chat.tokensPerSec),
+        // ✅ IMPROVEMENT 2: Confirmation banner for large transactions
+        if (chat.pendingAction != null)
+          _ConfirmationBanner(
+            preview:   chat.pendingAction!.preview,
+            onConfirm: () => notifier.confirmPendingAction(),
+            onReject:  () => notifier.rejectPendingAction(),
+          ),
         // Suggested replies
         if (chat.suggestedReplies.isNotEmpty && !chat.isGenerating)
           _SuggestedReplies(
@@ -289,10 +296,10 @@ class _SuggestedReplies extends StatelessWidget {
               padding: const EdgeInsets.symmetric(
                   horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: AppColors.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                    color: AppColors.primary.withOpacity(0.3)),
+                    color: AppColors.primary.withValues(alpha: 0.3)),
               ),
               child: Text(s, style: GoogleFonts.cairo(
                   fontSize: 12, color: AppColors.primary)),
@@ -475,7 +482,7 @@ class _BubbleBody extends StatelessWidget {
         color: isUser
             ? AppColors.userBubble
             : (message.isError
-                ? AppColors.error.withOpacity(0.15)
+                ? AppColors.error.withValues(alpha: 0.15)
                 : AppColors.assistantBubble),
         borderRadius: BorderRadius.only(
           topLeft:     const Radius.circular(18),
@@ -590,7 +597,7 @@ class _Avatar extends StatelessWidget {
       ),
       boxShadow: isActive
           ? [BoxShadow(
-              color: AppColors.primary.withOpacity(0.4),
+              color: AppColors.primary.withValues(alpha: 0.4),
               blurRadius: 8)]
           : [],
     ),
@@ -660,7 +667,7 @@ class _InputBar extends HookWidget {
         decoration: BoxDecoration(
           color: AppColors.surface,
           boxShadow: [BoxShadow(
-            color:      Colors.black.withOpacity(0.06),
+            color:      Colors.black.withValues(alpha: 0.06),
             blurRadius: 8, offset: const Offset(0, -2),
           )],
         ),
@@ -678,9 +685,9 @@ class _InputBar extends HookWidget {
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: isListening
-                      ? AppColors.error.withOpacity(0.7)
+                      ? AppColors.error.withValues(alpha: 0.7)
                       : isComposing
-                          ? AppColors.primary.withOpacity(0.5)
+                          ? AppColors.primary.withValues(alpha: 0.5)
                           : AppColors.inputBorder,
                   width: 1.5,
                 ),
@@ -744,7 +751,7 @@ class _VoiceBtn extends StatelessWidget {
         color: isListening ? AppColors.error : AppColors.surfaceVariant,
         boxShadow: isListening
             ? [BoxShadow(
-                color: AppColors.error.withOpacity(0.4),
+                color: AppColors.error.withValues(alpha: 0.4),
                 blurRadius: 8)]
             : [],
       ),
@@ -772,7 +779,7 @@ class _SendBtn extends StatelessWidget {
         color: enabled ? AppColors.primary : AppColors.surfaceVariant,
         boxShadow: enabled
             ? [BoxShadow(
-                color: AppColors.primary.withOpacity(0.35),
+                color: AppColors.primary.withValues(alpha: 0.35),
                 blurRadius: 8)]
             : [],
       ),
@@ -804,5 +811,63 @@ class _StopBtn extends StatelessWidget {
         duration: 700.ms, curve: Curves.easeInOut)
     .then()
     .scaleXY(begin: 1.05, end: 0.95, duration: 700.ms),
+  );
+}
+
+
+// ── CONFIRMATION BANNER ────────────────────────────────────────
+
+class _ConfirmationBanner extends StatelessWidget {
+  const _ConfirmationBanner({
+    required this.preview,
+    required this.onConfirm,
+    required this.onReject,
+  });
+  final String    preview;
+  final VoidCallback onConfirm;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color:        AppColors.warning.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Icon(Icons.help_outline_rounded, size: 16, color: AppColors.warning),
+        const Gap(6),
+        Text('تأكيد التسجيل', style: GoogleFonts.cairo(
+            fontSize: 12, color: AppColors.warning, fontWeight: FontWeight.bold)),
+      ]),
+      const Gap(6),
+      Text(preview, style: GoogleFonts.cairo(
+          fontSize: 13, color: AppColors.textPrimary)),
+      const Gap(10),
+      Row(children: [
+        Expanded(child: OutlinedButton(
+          onPressed: onReject,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: BorderSide(color: AppColors.error.withValues(alpha: 0.5)),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+          ),
+          child: Text('لأ، إلغاء', style: GoogleFonts.cairo(fontSize: 13)),
+        )),
+        const Gap(8),
+        Expanded(child: ElevatedButton(
+          onPressed: onConfirm,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.success,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+          ),
+          child: Text('أيوه، سجّل', style: GoogleFonts.cairo(fontSize: 13, fontWeight: FontWeight.bold)),
+        )),
+      ]),
+    ]),
   );
 }

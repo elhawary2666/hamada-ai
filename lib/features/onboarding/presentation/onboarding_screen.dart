@@ -169,7 +169,7 @@ class _Logo extends StatelessWidget {
         begin: Alignment.topLeft, end: Alignment.bottomRight,
       ),
       boxShadow: [BoxShadow(
-        color: AppColors.primary.withOpacity(0.35), blurRadius: 24, spreadRadius: 4)],
+        color: AppColors.primary.withValues(alpha: 0.35), blurRadius: 24, spreadRadius: 4)],
     ),
     child: Center(child: Text('ح', style: GoogleFonts.cairo(
       color: Colors.white, fontSize: 46, fontWeight: FontWeight.bold))),

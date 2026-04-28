@@ -11,7 +11,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 
+import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/di/providers.dart';
+import '../../../core/services/ai_service.dart';
 import '../providers/finance_provider.dart';
 
 const _months = [
@@ -28,7 +31,7 @@ class FinanceScreen extends ConsumerWidget {
     final notifier = ref.read(financeNotifierProvider.notifier);
 
     return DefaultTabController(
-      length: 3,
+      length: 7,
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
@@ -48,21 +51,30 @@ class FinanceScreen extends ConsumerWidget {
             labelColor:       AppColors.primary,
             unselectedLabelColor: AppColors.textSecondary,
             indicatorColor:   AppColors.primary,
+            isScrollable: true,
             tabs: const [
+              Tab(text: '🏠 نظرة عامة'),
               Tab(text: 'الحركات'),
               Tab(text: 'الأهداف'),
               Tab(text: 'المتكررة'),
+              Tab(text: 'الديون'),
+              Tab(text: 'الميزانية'),
+              Tab(text: 'التحليل'),
             ],
           ),
         ),
         body: state.isLoading
             ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
             : TabBarView(children: [
+                _DashboardTab(state: state, notifier: notifier),
                 _TransactionsTab(state: state, notifier: notifier),
                 _GoalsTab(state: state, notifier: notifier),
                 _RecurringTab(state: state, notifier: notifier),
+                _DebtTab(state: state, notifier: notifier),
+                _BudgetTab(state: state, notifier: notifier),
+                _SpendingAnalysisTab(state: state, notifier: notifier),
               ]),
-        floatingActionButton: _AddFab(state: state, notifier: notifier),
+        floatingActionButton: _AddFab(state: state, notifier: notifier, ref: ref),
       ),
     );
   }
@@ -291,7 +303,7 @@ class _AiAnalysisCard extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: AppColors.primary.withOpacity(0.3), width: 1)),
+            color: AppColors.primary.withValues(alpha: 0.3), width: 1)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         const Icon(Icons.psychology_outlined,
@@ -353,7 +365,7 @@ class _TxTile extends StatelessWidget {
     background: Container(
       alignment: Alignment.centerRight,
       padding: const EdgeInsets.only(right: 16),
-      color: AppColors.error.withOpacity(0.2),
+      color: AppColors.error.withValues(alpha: 0.2),
       child: const Icon(Icons.delete_outline, color: AppColors.error),
     ),
     child: Container(
@@ -368,7 +380,7 @@ class _TxTile extends StatelessWidget {
           width: 36, height: 36,
           decoration: BoxDecoration(
               color: (tx.isIncome ? AppColors.income : AppColors.expense)
-                  .withOpacity(0.15),
+                  .withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8)),
           child: Icon(
               tx.isIncome ? Icons.arrow_downward : Icons.arrow_upward,
@@ -478,7 +490,7 @@ class _GoalCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
             color: goal.isCompleted
-                ? AppColors.success.withOpacity(0.5)
+                ? AppColors.success.withValues(alpha: 0.5)
                 : AppColors.inputBorder,
             width: goal.isCompleted ? 1.5 : 0.5)),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -509,7 +521,7 @@ class _GoalCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(
                 horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.15),
+                color: AppColors.success.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6)),
             child: Text('مكتمل ✅',
                 style: GoogleFonts.cairo(
@@ -660,7 +672,7 @@ class _RecurringTile extends StatelessWidget {
           width: 40, height: 40,
           decoration: BoxDecoration(
               color: (rec.isExpense ? AppColors.expense : AppColors.income)
-                  .withOpacity(0.12),
+                  .withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(10)),
           child: Icon(Icons.repeat,
               size: 18,
@@ -683,7 +695,7 @@ class _RecurringTile extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
-                    color: AppColors.warning.withOpacity(0.2),
+                    color: AppColors.warning.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(4)),
                 child: Text(daysLeft == 0 ? 'اليوم!' : 'باقي $daysLeft أيام',
                     style: GoogleFonts.cairo(
@@ -744,9 +756,10 @@ class _RecurringTile extends StatelessWidget {
 // ════════════════════════════════════════════════════════════
 
 class _AddFab extends StatelessWidget {
-  const _AddFab({required this.state, required this.notifier});
+  const _AddFab({required this.state, required this.notifier, required this.ref});
   final FinanceState    state;
   final FinanceNotifier notifier;
+  final WidgetRef       ref;
 
   @override
   Widget build(BuildContext context) {
@@ -763,11 +776,15 @@ class _AddFab extends StatelessWidget {
                     strokeWidth: 2, color: Colors.white))
             : const Icon(Icons.add, color: Colors.white),
         label: Text(
-          tabCtrl.index == 0
+          tabCtrl.index == 1
               ? 'إضافة معاملة'
-              : tabCtrl.index == 1
+              : tabCtrl.index == 2
                   ? 'إضافة هدف'
-                  : 'إضافة متكرر',
+                  : tabCtrl.index == 3
+                      ? 'إضافة متكرر'
+                      : tabCtrl.index == 4
+                          ? 'إضافة دين'
+                          : '',
           style: GoogleFonts.cairo(
               color: Colors.white, fontWeight: FontWeight.bold),
         ),
@@ -776,12 +793,14 @@ class _AddFab extends StatelessWidget {
   }
 
   void _onAdd(BuildContext context, int tabIndex) {
-    if (tabIndex == 0) {
+    if (tabIndex == 1) {
       _showAddTxSheet(context);
-    } else if (tabIndex == 1) {
+    } else if (tabIndex == 2) {
       _showAddGoalSheet(context);
-    } else {
+    } else if (tabIndex == 3) {
       _showAddRecurringSheet(context);
+    } else if (tabIndex == 4) {
+      _showAddDebtSheet(context);
     }
   }
 
@@ -825,8 +844,8 @@ class _AddFab extends StatelessWidget {
                   decoration: BoxDecoration(
                       color: type == t
                           ? (t == 'expense'
-                              ? AppColors.expense.withOpacity(0.2)
-                              : AppColors.income.withOpacity(0.2))
+                              ? AppColors.expense.withValues(alpha: 0.2)
+                              : AppColors.income.withValues(alpha: 0.2))
                           : AppColors.surfaceVariant,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
@@ -972,7 +991,7 @@ class _AddFab extends StatelessWidget {
                     margin: const EdgeInsets.only(left: 6),
                     decoration: BoxDecoration(
                         color: icon == ic
-                            ? AppColors.primary.withOpacity(0.2)
+                            ? AppColors.primary.withValues(alpha: 0.2)
                             : AppColors.surfaceVariant,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
@@ -1074,6 +1093,121 @@ class _AddFab extends StatelessWidget {
 
   // ── Add Recurring Sheet ───────────────────────────────────
 
+
+  void _showAddDebtSheet(BuildContext context) {
+    final nameCtrl   = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final notesCtrl  = TextEditingController();
+    String direction = 'owe'; // owe = عليك، owed = لك
+
+    showModalBottomSheet(
+      context: context, isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (_, setSt) => Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.of(ctx).viewInsets.bottom + 16),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(width: 36, height: 4,
+                decoration: BoxDecoration(color: AppColors.textHint,
+                    borderRadius: BorderRadius.circular(2))),
+            const Gap(16),
+            Text('تسجيل دين', style: GoogleFonts.cairo(
+                fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+            const Gap(14),
+            // Direction toggle
+            Row(children: [
+              Expanded(child: GestureDetector(
+                onTap: () => setSt(() => direction = 'owe'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  margin: const EdgeInsets.only(left: 4),
+                  decoration: BoxDecoration(
+                    color: direction == 'owe'
+                        ? AppColors.expense.withValues(alpha: 0.15) : AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: direction == 'owe' ? AppColors.expense : Colors.transparent),
+                  ),
+                  child: Text('عليّ أنا', textAlign: TextAlign.center,
+                      style: GoogleFonts.cairo(
+                          fontWeight: FontWeight.bold,
+                          color: direction == 'owe' ? AppColors.expense : AppColors.textSecondary)),
+                ),
+              )),
+              Expanded(child: GestureDetector(
+                onTap: () => setSt(() => direction = 'owed'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  margin: const EdgeInsets.only(right: 4),
+                  decoration: BoxDecoration(
+                    color: direction == 'owed'
+                        ? AppColors.income.withValues(alpha: 0.15) : AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: direction == 'owed' ? AppColors.income : Colors.transparent),
+                  ),
+                  child: Text('لي أنا', textAlign: TextAlign.center,
+                      style: GoogleFonts.cairo(
+                          fontWeight: FontWeight.bold,
+                          color: direction == 'owed' ? AppColors.income : AppColors.textSecondary)),
+                ),
+              )),
+            ]),
+            const Gap(12),
+            TextField(
+              controller: nameCtrl, textDirection: TextDirection.rtl, autofocus: true,
+              style: GoogleFonts.cairo(color: AppColors.textPrimary),
+              decoration: InputDecoration(labelText: 'الاسم', hintText: 'مثال: أحمد'),
+            ),
+            const Gap(8),
+            TextField(
+              controller: amountCtrl, keyboardType: TextInputType.number,
+              style: GoogleFonts.cairo(color: AppColors.textPrimary, fontSize: 20,
+                  fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: '0.00', suffixText: 'ج.م',
+                hintStyle: GoogleFonts.cairo(color: AppColors.textHint, fontSize: 20),
+              ),
+            ),
+            const Gap(8),
+            TextField(
+              controller: notesCtrl, textDirection: TextDirection.rtl,
+              style: GoogleFonts.cairo(color: AppColors.textPrimary),
+              decoration: InputDecoration(labelText: 'ملاحظة (اختياري)'),
+            ),
+            const Gap(16),
+            SizedBox(width: double.infinity, child: ElevatedButton(
+              onPressed: () async {
+                final name   = nameCtrl.text.trim();
+                final amount = double.tryParse(amountCtrl.text.trim());
+                if (name.isEmpty || amount == null || amount <= 0) return;
+                final db  = ref.read(databaseHelperProvider);
+                final now = DateTime.now().millisecondsSinceEpoch;
+                await db.insert('debts', {
+                  'id':        const Uuid().v4(),
+                  'name':      name,
+                  'amount':    amount,
+                  'direction': direction,
+                  'notes':     notesCtrl.text.trim(),
+                  'due_date':  null,
+                  'is_paid':   0,
+                  'created_at': now,
+                });
+                notifier.refresh();
+                if (ctx.mounted) Navigator.pop(ctx);
+                HapticFeedback.lightImpact();
+              },
+              child: Text('حفظ الدين', style: GoogleFonts.cairo(
+                  fontSize: 16, fontWeight: FontWeight.bold)),
+            )),
+            const Gap(4),
+          ]),
+        ),
+      ),
+    );
+  }
   void _showAddRecurringSheet(BuildContext context) {
     final titleCtrl  = TextEditingController();
     final amountCtrl = TextEditingController();
@@ -1111,8 +1245,8 @@ class _AddFab extends StatelessWidget {
                   decoration: BoxDecoration(
                       color: type == t
                           ? (t == 'expense'
-                              ? AppColors.expense.withOpacity(0.2)
-                              : AppColors.income.withOpacity(0.2))
+                              ? AppColors.expense.withValues(alpha: 0.2)
+                              : AppColors.income.withValues(alpha: 0.2))
                           : AppColors.surfaceVariant,
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
@@ -1232,6 +1366,676 @@ class _AddFab extends StatelessWidget {
             ),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// TAB 4: BUDGET
+// ════════════════════════════════════════════════════════════
+
+class _BudgetTab extends ConsumerStatefulWidget {
+  const _BudgetTab({required this.state, required this.notifier});
+  final FinanceState    state;
+  final FinanceNotifier notifier;
+  @override
+  ConsumerState<_BudgetTab> createState() => _BudgetTabState();
+}
+
+class _BudgetTabState extends ConsumerState<_BudgetTab> {
+  List<Map<String, dynamic>> _budgets = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBudgets();
+  }
+
+  Future<void> _loadBudgets() async {
+    final db  = ref.read(databaseHelperProvider);
+    final now = DateTime.now();
+    final bs  = await db.getBudgets(now.year, now.month);
+    if (mounted) setState(() { _budgets = bs; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+    // ✅ FIX: convert List<CategoryStat> → Map<String,double> for budget lookup
+    final cats = {
+      for (final c in widget.state.categoryStats) c.category: c.total
+    };
+    final now     = DateTime.now();
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('ميزانية ${_months[now.month - 1]}',
+            style: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary)),
+        const Gap(16),
+        if (_budgets.isEmpty)
+          Center(child: Column(children: [
+            const Gap(40),
+            const Text('💰', style: TextStyle(fontSize: 48)),
+            const Gap(12),
+            Text('لا توجد ميزانيات محددة', style: GoogleFonts.cairo(
+                fontSize: 14, color: AppColors.textSecondary)),
+            const Gap(6),
+            Text('قول لحماده: "ميزانية الطعام 1000 جنيه"',
+                style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textHint)),
+          ]))
+        else
+          ...(_budgets.map((b) {
+            final cat    = b['category'] as String;
+            final limit  = (b['limit_amount'] as num).toDouble();
+            final spent  = cats[cat] ?? 0.0;
+            final pct    = (limit > 0 ? (spent / limit).clamp(0.0, 1.0) : 0.0);
+            final pctInt = (pct * 100).toInt();
+            final isOver = pct >= 1.0;
+            final isWarn = pct >= 0.8;
+            final color  = isOver ? AppColors.expense
+                : isWarn ? AppColors.warning : AppColors.success;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surface, borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: color.withValues(alpha: 0.3)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text(cat, style: GoogleFonts.cairo(
+                      fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                  Text('$pctInt%', style: GoogleFonts.cairo(
+                      fontSize: 13, color: color, fontWeight: FontWeight.bold)),
+                ]),
+                const Gap(8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct, minHeight: 8,
+                    backgroundColor: AppColors.surfaceVariant,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                ),
+                const Gap(6),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('${spent.toStringAsFixed(0)} ج.م صُرف',
+                      style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary)),
+                  Text('الحد: ${limit.toStringAsFixed(0)} ج.م',
+                      style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textHint)),
+                ]),
+                if (isWarn) ...[
+                  const Gap(4),
+                  Text(
+                    isOver ? '⚠️ تجاوزت الميزانية!' : '⚠️ قربت على الحد',
+                    style: GoogleFonts.cairo(fontSize: 11, color: color),
+                  ),
+                ],
+              ]),
+            );
+          })).toList(),
+      ],
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// TAB 5: SPENDING ANALYSIS (Time + Prediction)
+// ════════════════════════════════════════════════════════════
+
+class _SpendingAnalysisTab extends ConsumerStatefulWidget {
+  const _SpendingAnalysisTab({required this.state, required this.notifier});
+  final FinanceState    state;
+  final FinanceNotifier notifier;
+  @override
+  ConsumerState<_SpendingAnalysisTab> createState() => _SpendingAnalysisTabState();
+}
+
+class _SpendingAnalysisTabState extends ConsumerState<_SpendingAnalysisTab> {
+  Map<String, double> _timeData         = {};
+  String              _prediction       = '';
+  bool                _loadingTime      = true;
+  bool                _loadingPrediction = true;
+
+  static const _periods = ['صباح', 'ضهر', 'مساء', 'ليل'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTimeData();
+    _loadPrediction();
+  }
+
+  Future<void> _loadTimeData() async {
+    final db  = ref.read(databaseHelperProvider);
+    final now = DateTime.now();
+    final td  = await db.getSpendingByTimeOfDay(now.year, now.month);
+    if (mounted) setState(() { _timeData = td; _loadingTime = false; });
+  }
+
+  Future<void> _loadPrediction() async {
+    final ai   = ref.read(aiServiceProvider);
+    final pred = await ai.predictNextMonthFinance();
+    if (mounted) setState(() { _prediction = pred; _loadingPrediction = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final maxVal = _timeData.values.isEmpty ? 1.0
+        : _timeData.values.reduce((a, b) => a > b ? a : b);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('الإنفاق حسب وقت اليوم',
+            style: GoogleFonts.cairo(fontSize: 15, fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary)),
+        const Gap(16),
+        if (_loadingTime)
+          const Center(child: Padding(
+            padding: EdgeInsets.all(24),
+            child: CircularProgressIndicator(color: AppColors.primary),
+          ))
+        else if (_timeData.isEmpty)
+          Center(child: Text('لا توجد بيانات بعد',
+              style: GoogleFonts.cairo(color: AppColors.textSecondary)))
+        else
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12)),
+            child: Column(
+              children: _periods.map((period) {
+                final val = _timeData[period] ?? 0.0;
+                final pct = maxVal > 0 ? val / maxVal : 0.0;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(children: [
+                    SizedBox(width: 40,
+                        child: Text(period, style: GoogleFonts.cairo(
+                            fontSize: 12, color: AppColors.textSecondary))),
+                    const Gap(8),
+                    Expanded(child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: pct, minHeight: 16,
+                        backgroundColor: AppColors.surfaceVariant,
+                        valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                      ),
+                    )),
+                    const Gap(8),
+                    SizedBox(width: 60,
+                        child: Text('${val.toStringAsFixed(0)} ج.م',
+                            style: GoogleFonts.cairo(
+                                fontSize: 11, color: AppColors.textHint),
+                            textAlign: TextAlign.end)),
+                  ]),
+                );
+              }).toList(),
+            ),
+          ),
+        const Gap(24),
+        if (_loadingPrediction) ...[
+          Text('تنبؤ الشهر الجاي',
+              style: GoogleFonts.cairo(fontSize: 15, fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary)),
+          const Gap(12),
+          const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+        ] else if (_prediction.isNotEmpty) ...[
+          Text('تنبؤ الشهر الجاي',
+              style: GoogleFonts.cairo(fontSize: 15, fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary)),
+          const Gap(12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surface, borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+            ),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('🔮', style: TextStyle(fontSize: 22)),
+              const Gap(12),
+              Expanded(child: Text(_prediction,
+                  style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textSecondary,
+                      height: 1.5))),
+            ]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════
+// TAB 0: DASHBOARD — نظرة عامة
+// ════════════════════════════════════════════════════════════
+
+class _DashboardTab extends ConsumerStatefulWidget {
+  const _DashboardTab({required this.state, required this.notifier});
+  final FinanceState    state;
+  final FinanceNotifier notifier;
+  @override
+  ConsumerState<_DashboardTab> createState() => _DashboardTabState();
+}
+
+class _DashboardTabState extends ConsumerState<_DashboardTab> {
+  Map<String, double> _budgets = {};
+  bool _loading = true;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    final db  = ref.read(databaseHelperProvider);
+    final now = DateTime.now();
+    final bs  = await db.getBudgets(now.year, now.month);
+    if (mounted) setState(() {
+      _budgets = { for (final b in bs) b['category'] as String: (b['limit_amount'] as num).toDouble() };
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s       = widget.state;
+    final summary = s.monthlySummary;
+    final income  = summary?.income  ?? 0.0;
+    final expense = summary?.expense ?? 0.0;
+    final net     = income - expense;
+    final cats    = { for (final c in s.categoryStats) c.category: c.total };
+    final now     = DateTime.now();
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      children: [
+        // ── Big Balance Card ──────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: net >= 0
+                  ? [AppColors.primary, AppColors.primary.withValues(alpha: 0.7)]
+                  : [AppColors.error,   AppColors.error.withValues(alpha: 0.7)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('رصيد ${_months[now.month - 1]}',
+                style: GoogleFonts.cairo(fontSize: 13, color: Colors.white70)),
+            const Gap(4),
+            Text(
+              '${net >= 0 ? '+' : ''}${NumberFormat('#,###').format(net.toInt())} ج.م',
+              style: GoogleFonts.cairo(
+                  fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            const Gap(12),
+            Row(children: [
+              _MiniStat(label: 'دخل', value: income, color: Colors.green[300]!),
+              const Gap(24),
+              _MiniStat(label: 'مصروف', value: expense, color: Colors.red[300]!),
+              if (summary != null && summary.savingsRate > 0) ...[
+                const Gap(24),
+                _MiniStat(
+                  label: 'توفير',
+                  value: summary.savingsRate,
+                  color: Colors.blue[200]!,
+                  isPercent: true,
+                ),
+              ],
+            ]),
+          ]),
+        ),
+        const Gap(16),
+
+        // ── Budget Progress ───────────────────────────────
+        if (_budgets.isNotEmpty && !_loading) ...[
+          Text('الميزانية', style: GoogleFonts.cairo(
+              fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+          const Gap(8),
+          ..._budgets.entries.map((e) {
+            final spent = cats[e.key] ?? 0.0;
+            final pct   = e.value > 0 ? (spent / e.value).clamp(0.0, 1.0) : 0.0;
+            final color = pct >= 1.0 ? AppColors.expense
+                : pct >= 0.8 ? AppColors.warning : AppColors.success;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text(e.key, style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textSecondary)),
+                  Text('${spent.toStringAsFixed(0)} / ${e.value.toStringAsFixed(0)} ج.م',
+                      style: GoogleFonts.cairo(fontSize: 11, color: color)),
+                ]),
+                const Gap(4),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct, minHeight: 6,
+                    backgroundColor: AppColors.surfaceVariant,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                ),
+              ]),
+            );
+          }),
+          const Gap(8),
+        ],
+
+        // ── Quick Stats ───────────────────────────────────
+        Row(children: [
+          Expanded(child: _QuickStatCard(
+            icon: '🎯', label: 'أهداف نشطة',
+            value: s.goals.where((g) => !g.isCompleted).length.toString(),
+          )),
+          const Gap(8),
+          Expanded(child: _QuickStatCard(
+            icon: '🔄', label: 'متكررة',
+            value: s.recurring.where((r) => r.isActive).length.toString(),
+          )),
+          const Gap(8),
+          Expanded(child: _QuickStatCard(
+            icon: '📋', label: 'حركات',
+            value: s.transactions.length.toString(),
+          )),
+        ]),
+        const Gap(16),
+
+        // ── Top spending categories ───────────────────────
+        if (s.categoryStats.isNotEmpty) ...[
+          Text('أعلى مصروفات الشهر', style: GoogleFonts.cairo(
+              fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+          const Gap(8),
+          ...s.categoryStats.take(4).map((c) => Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(children: [
+              Expanded(child: Text(c.category, style: GoogleFonts.cairo(
+                  fontSize: 13, color: AppColors.textSecondary))),
+              Text('${NumberFormat('#,###').format(c.total.toInt())} ج.م',
+                  style: GoogleFonts.cairo(
+                      fontSize: 13, color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+              const Gap(4),
+              Text('(${c.percentage.toStringAsFixed(0)}%)',
+                  style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textHint)),
+            ]),
+          )),
+        ],
+
+        // ── Debt summary ─────────────────────────────────
+        if (s.debtSummary != null) ...[
+          const Gap(16),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.surface, borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+            ),
+            child: Row(children: [
+              const Text('⚠️', style: TextStyle(fontSize: 20)),
+              const Gap(10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('ديون', style: GoogleFonts.cairo(
+                    fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                Text(
+                  'عليك: ${(s.debtSummary!['owe'] as num).toStringAsFixed(0)} ج.م  |  '
+                  'لك: ${(s.debtSummary!['owed'] as num).toStringAsFixed(0)} ج.م',
+                  style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              ])),
+            ]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MiniStat extends StatelessWidget {
+  const _MiniStat({required this.label, required this.value,
+      required this.color, this.isPercent = false});
+  final String label;
+  final double value;
+  final Color  color;
+  final bool   isPercent;
+  @override
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(label, style: GoogleFonts.cairo(fontSize: 11, color: Colors.white70)),
+    Text(
+      isPercent ? '${value.toStringAsFixed(0)}%' : '${NumberFormat('#,###').format(value.toInt())} ج.م',
+      style: GoogleFonts.cairo(fontSize: 13, fontWeight: FontWeight.bold, color: color),
+    ),
+  ]);
+}
+
+class _QuickStatCard extends StatelessWidget {
+  const _QuickStatCard({required this.icon, required this.label, required this.value});
+  final String icon, label, value;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: AppColors.surface, borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: AppColors.inputBorder, width: 0.5),
+    ),
+    child: Column(children: [
+      Text(icon, style: const TextStyle(fontSize: 20)),
+      const Gap(4),
+      Text(value, style: GoogleFonts.cairo(
+          fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+      Text(label, style: GoogleFonts.cairo(fontSize: 10, color: AppColors.textHint)),
+    ]),
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// TAB 5: DEBT TRACKING
+// ════════════════════════════════════════════════════════════
+
+class _DebtTab extends ConsumerStatefulWidget {
+  const _DebtTab({required this.state, required this.notifier});
+  final FinanceState    state;
+  final FinanceNotifier notifier;
+  @override
+  ConsumerState<_DebtTab> createState() => _DebtTabState();
+}
+
+class _DebtTabState extends ConsumerState<_DebtTab> {
+  List<Map<String, dynamic>> _debts = [];
+  bool _loading = true;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    final db   = ref.read(databaseHelperProvider);
+    final data = await db.getAllDebts();
+    if (mounted) setState(() { _debts = data; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+
+    final unpaid = _debts.where((d) => (d['is_paid'] as int? ?? 0) == 0).toList();
+    final paid   = _debts.where((d) => (d['is_paid'] as int? ?? 0) == 1).toList();
+
+    // Summary
+    double owe = 0, owed = 0;
+    for (final d in unpaid) {
+      final a = (d['amount'] as num).toDouble();
+      if (d['direction'] == 'owe') { owe += a; } else { owed += a; }
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      children: [
+        // Summary row
+        if (unpaid.isNotEmpty) ...[
+          Row(children: [
+            Expanded(child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.expense.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.expense.withValues(alpha: 0.3)),
+              ),
+              child: Column(children: [
+                Text('عليك', style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textSecondary)),
+                Text('${owe.toStringAsFixed(0)} ج.م', style: GoogleFonts.cairo(
+                    fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.expense)),
+              ]),
+            )),
+            const Gap(8),
+            Expanded(child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.income.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.income.withValues(alpha: 0.3)),
+              ),
+              child: Column(children: [
+                Text('لك', style: GoogleFonts.cairo(fontSize: 12, color: AppColors.textSecondary)),
+                Text('${owed.toStringAsFixed(0)} ج.م', style: GoogleFonts.cairo(
+                    fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.income)),
+              ]),
+            )),
+          ]),
+          const Gap(16),
+        ],
+
+        if (unpaid.isEmpty && paid.isEmpty)
+          Center(child: Column(children: [
+            const Gap(40),
+            const Text('💸', style: TextStyle(fontSize: 48)),
+            const Gap(12),
+            Text('مفيش ديون مسجلة', style: GoogleFonts.cairo(
+                fontSize: 14, color: AppColors.textSecondary)),
+            const Gap(6),
+            Text('اضغط + لتسجيل دين', style: GoogleFonts.cairo(
+                fontSize: 12, color: AppColors.textHint)),
+          ]))
+        else ...[
+          if (unpaid.isNotEmpty) ...[
+            Text('ديون قائمة', style: GoogleFonts.cairo(
+                fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+            const Gap(8),
+            ...unpaid.map((d) => _DebtTile(debt: d, onPaid: () async {
+              await ref.read(databaseHelperProvider).markDebtPaid(d['id'] as String);
+              _load();
+            }, onDelete: () async {
+              await ref.read(databaseHelperProvider).delete('debts', d['id'] as String);
+              _load();
+            })),
+          ],
+          if (paid.isNotEmpty) ...[
+            const Gap(16),
+            Text('مدفوعة', style: GoogleFonts.cairo(
+                fontSize: 13, color: AppColors.textHint, fontWeight: FontWeight.bold)),
+            const Gap(8),
+            ...paid.map((d) => _DebtTile(debt: d, isPaid: true, onDelete: () async {
+              await ref.read(databaseHelperProvider).delete('debts', d['id'] as String);
+              _load();
+            })),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+class _DebtTile extends StatelessWidget {
+  const _DebtTile({required this.debt, this.isPaid = false, this.onPaid, required this.onDelete});
+  final Map<String, dynamic> debt;
+  final bool         isPaid;
+  final VoidCallback? onPaid;
+  final VoidCallback  onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final name      = debt['name']      as String? ?? '';
+    final amount    = (debt['amount']   as num).toDouble();
+    final direction = debt['direction'] as String? ?? 'owe';
+    final notes     = debt['notes']     as String? ?? '';
+    final dueMs     = debt['due_date']  as int?;
+    final isOwe     = direction == 'owe';
+    final color     = isOwe ? AppColors.expense : AppColors.income;
+
+    String? dueStr;
+    if (dueMs != null) {
+      final d = DateTime.fromMillisecondsSinceEpoch(dueMs);
+      dueStr  = DateFormat('dd/MM/yyyy').format(d);
+    }
+
+    return Dismissible(
+      key: ValueKey(debt['id']),
+      direction: DismissDirection.endToStart,
+      onDismissed: (_) => onDelete(),
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        color: AppColors.error.withValues(alpha: 0.2),
+        child: const Icon(Icons.delete_outline, color: AppColors.error),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isPaid ? AppColors.surfaceVariant : AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isPaid ? AppColors.inputBorder : color.withValues(alpha: 0.3),
+            width: isPaid ? 0.5 : 1,
+          ),
+        ),
+        child: Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color.withValues(alpha: isPaid ? 0.05 : 0.12),
+            ),
+            child: Center(child: Text(isOwe ? '⬆️' : '⬇️',
+                style: const TextStyle(fontSize: 18))),
+          ),
+          const Gap(10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: GoogleFonts.cairo(
+                fontSize: 14, fontWeight: FontWeight.w600,
+                color: isPaid ? AppColors.textHint : AppColors.textPrimary,
+                decoration: isPaid ? TextDecoration.lineThrough : null)),
+            if (notes.isNotEmpty)
+              Text(notes, style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textHint)),
+            if (dueStr != null)
+              Text('استحقاق: $dueStr', style: GoogleFonts.cairo(
+                  fontSize: 11, color: AppColors.textSecondary)),
+          ])),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${isOwe ? '-' : '+'}${amount.toStringAsFixed(0)}',
+                style: GoogleFonts.cairo(
+                    fontSize: 15, fontWeight: FontWeight.bold,
+                    color: isPaid ? AppColors.textHint : color)),
+            Text('ج.م', style: GoogleFonts.cairo(fontSize: 10, color: AppColors.textHint)),
+          ]),
+          if (!isPaid && onPaid != null) ...[
+            const Gap(6),
+            GestureDetector(
+              onTap: onPaid,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
+                ),
+                child: Text('دُفع', style: GoogleFonts.cairo(
+                    fontSize: 11, color: AppColors.success, fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ]),
       ),
     );
   }

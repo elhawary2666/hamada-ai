@@ -37,8 +37,10 @@ android {
         applicationId "com.hamada.hamada_ai"
         minSdk 24
         targetSdk 34
-        versionCode flutterVersionCode.toInteger()
-        versionName flutterVersionName
+        // ✅ FIX: Hardcoded — not dependent on local.properties which is gitignored
+        // Increment versionCode with every release build
+        versionCode 2
+        versionName "2.1.0"
         multiDexEnabled true
     }
 

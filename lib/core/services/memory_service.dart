@@ -37,7 +37,7 @@ class MemoryService {
     final now   = DateTime.now().millisecondsSinceEpoch;
     final id    = _uuid.v4();
     final emb   = _textToSimpleEmbedding(content);
-    final bytes = emb.buffer.asUint8List(); // FIX: Float32→Uint8 for BLOB
+    final bytes = emb.buffer.asUint8List();
 
     await db.insert(Tables.memories, {
       'id':            id,
@@ -57,6 +57,59 @@ class MemoryService {
 
     _log.d('🧠 Memory saved [$type]: ${content.substring(0, math.min(50, content.length))}');
     return id;
+  }
+
+  /// ✅ IMPROVEMENT 3: Update existing similar memory instead of creating duplicate
+  /// If a memory with high cosine similarity exists for same type → update it.
+  /// Otherwise → create new memory.
+  Future<String> updateOrSaveMemory({
+    required String content,
+    required String type,
+    int importance = 5,
+    String? sourceMsgId,
+    double similarityThreshold = 0.82,
+  }) async {
+    if (content.trim().isEmpty) return '';
+
+    try {
+      // Search for similar existing memories of same type
+      final existing = await db.getMemoriesByType(type, limit: 20);
+      final queryVec = _textToSimpleEmbedding(content);
+
+      for (final mem in existing) {
+        final bytes = mem['embedding'] as Uint8List?;
+        if (bytes == null || bytes.length < 4) continue;
+
+        final aligned   = Uint8List(bytes.length)..setAll(0, bytes);
+        final storedVec = aligned.buffer.asFloat32List();
+        final sim       = _cosineSim(queryVec, storedVec);
+
+        if (sim >= similarityThreshold) {
+          // ✅ Found a very similar memory → update it with new content
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final newEmb   = _textToSimpleEmbedding(content);
+          final newBytes = newEmb.buffer.asUint8List();
+          await db.update(Tables.memories, {
+            'content':       content.trim(),
+            'importance':    math.max(importance, (mem['importance'] as int? ?? 5)).clamp(1, 10),
+            'embedding':     newBytes,
+            'updated_at':    now,
+            'last_accessed': now,
+            'source_msg_id': sourceMsgId ?? mem['source_msg_id'],
+          }, mem['id'] as String);
+          _log.d('🧠 Memory updated [$type]: ${content.substring(0, math.min(50, content.length))}');
+          return mem['id'] as String;
+        }
+      }
+    } catch (_) {}
+
+    // No similar memory found → create new
+    return saveMemory(
+      content:     content,
+      type:        type,
+      importance:  importance,
+      sourceMsgId: sourceMsgId,
+    );
   }
 
   // ── RETRIEVE ──────────────────────────────────────────────

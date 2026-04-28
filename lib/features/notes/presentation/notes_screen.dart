@@ -43,6 +43,17 @@ class NotesNotifier extends _$NotesNotifier {
     ref.invalidateSelf();
   }
 
+
+  Future<void> edit(String id, {required String content, String? title}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await ref.read(databaseHelperProvider).update(Tables.userNotes, {
+      'title':      title?.isEmpty == true ? null : title,
+      'content':    content,
+      'updated_at': now,
+    }, id);
+    ref.invalidateSelf();
+  }
+
   Future<void> delete(String id) async {
     await ref.read(databaseHelperProvider).delete(Tables.userNotes, id);
     ref.invalidateSelf();
@@ -121,7 +132,7 @@ class _NoteCard extends StatelessWidget {
       decoration: BoxDecoration(color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isPinned ? AppColors.primary.withOpacity(0.4) : AppColors.inputBorder,
+          color: isPinned ? AppColors.primary.withValues(alpha: 0.4) : AppColors.inputBorder,
           width: isPinned ? 1.5 : 0.5),
       ),
       child: ListTile(
@@ -143,12 +154,22 @@ class _NoteCard extends StatelessWidget {
           color: AppColors.surfaceVariant, iconColor: AppColors.textHint,
           onSelected: (v) {
             switch (v) {
+              case 'edit':
+                showModalBottomSheet(
+                  context: context, isScrollControlled: true,
+                  backgroundColor: AppColors.surface,
+                  shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                  builder: (_) => _EditNoteSheet(ref: ref, note: note),
+                );
+                break;
               case 'pin':     ref.read(notesNotifierProvider.notifier).togglePin(note['id'], isPinned); break;
               case 'archive': ref.read(notesNotifierProvider.notifier).archive(note['id']); break;
               case 'delete':  ref.read(notesNotifierProvider.notifier).delete(note['id']); break;
             }
           },
           itemBuilder: (_) => [
+            PopupMenuItem(value: 'edit',    child: Text('تعديل',   style: GoogleFonts.cairo())),
             PopupMenuItem(value: 'pin',     child: Text(isPinned ? 'إلغاء التثبيت' : 'تثبيت', style: GoogleFonts.cairo())),
             PopupMenuItem(value: 'archive', child: Text('أرشفة',  style: GoogleFonts.cairo())),
             PopupMenuItem(value: 'delete',  child: Text('حذف',    style: GoogleFonts.cairo(color: AppColors.error))),
@@ -166,7 +187,7 @@ class _Badge extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     margin: const EdgeInsets.only(left: 6),
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-    decoration: BoxDecoration(color: color.withOpacity(0.12),
+    decoration: BoxDecoration(color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(10)),
     child: Text(label, style: GoogleFonts.cairo(fontSize: 10, color: color)),
   );
@@ -262,5 +283,70 @@ class _SearchDelegate extends SearchDelegate {
         itemBuilder: (_, i) => _NoteCard(note: s.data![i], index: i, ref: ref),
       );
     },
+  );
+}
+
+
+// ── EDIT NOTE SHEET ───────────────────────────────────────────
+
+class _EditNoteSheet extends StatefulWidget {
+  const _EditNoteSheet({required this.ref, required this.note});
+  final WidgetRef ref;
+  final Map<String, dynamic> note;
+  @override
+  State<_EditNoteSheet> createState() => _EditNoteSheetState();
+}
+
+class _EditNoteSheetState extends State<_EditNoteSheet> {
+  late final TextEditingController _title;
+  late final TextEditingController _content;
+
+  @override
+  void initState() {
+    super.initState();
+    _title   = TextEditingController(text: widget.note['title']   as String? ?? '');
+    _content = TextEditingController(text: widget.note['content'] as String? ?? '');
+  }
+
+  @override
+  void dispose() { _title.dispose(); _content.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+    child: Padding(padding: const EdgeInsets.all(20),
+      child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Center(child: Container(width: 36, height: 4,
+            decoration: BoxDecoration(color: AppColors.textHint, borderRadius: BorderRadius.circular(2)))),
+        const Gap(16),
+        Text('تعديل الملاحظة', style: GoogleFonts.cairo(
+            fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+        const Gap(14),
+        TextField(controller: _title, textDirection: TextDirection.rtl,
+          style: GoogleFonts.cairo(color: AppColors.textPrimary),
+          decoration: InputDecoration(labelText: 'العنوان (اختياري)')),
+        const Gap(10),
+        TextField(controller: _content, textDirection: TextDirection.rtl, maxLines: 5,
+          style: GoogleFonts.cairo(color: AppColors.textPrimary),
+          decoration: InputDecoration(labelText: 'المحتوى', alignLabelWithHint: true)),
+        const Gap(14),
+        SizedBox(width: double.infinity, child: ElevatedButton(
+          onPressed: () async {
+            if (_content.text.trim().isEmpty) return;
+            await widget.ref.read(notesNotifierProvider.notifier).edit(
+              widget.note['id'] as String,
+              content: _content.text.trim(),
+              title:   _title.text.trim().isEmpty ? null : _title.text.trim(),
+            );
+            if (!mounted) return;
+            Navigator.pop(context);
+            HapticFeedback.lightImpact();
+          },
+          child: Text('حفظ التعديل', style: GoogleFonts.cairo(fontSize: 16)),
+        )),
+        const Gap(8),
+      ]),
+    ),
   );
 }

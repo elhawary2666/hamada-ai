@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../router/app_router.dart';
 
-
 class MainShell extends StatelessWidget {
   const MainShell({super.key, required this.child});
   final Widget child;
@@ -14,6 +13,7 @@ class MainShell extends StatelessWidget {
     (route: AppRoutes.notes,    icon: Icons.note_outlined,                   label: 'ملاحظاتي'),
     (route: AppRoutes.finance,  icon: Icons.account_balance_wallet_outlined, label: 'حساباتي'),
     (route: AppRoutes.planner,  icon: Icons.check_box_outlined,              label: 'مهامي'),
+    (route: AppRoutes.habits,   icon: Icons.track_changes_outlined,          label: 'عاداتي'),
     (route: AppRoutes.settings, icon: Icons.settings_outlined,               label: 'الإعدادات'),
   ];
 
@@ -28,7 +28,7 @@ class MainShell extends StatelessWidget {
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(0.06), width: 0.5),
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06), width: 0.5),
           ),
         ),
         child: BottomNavigationBar(
