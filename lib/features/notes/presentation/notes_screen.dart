@@ -1,4 +1,5 @@
 // lib/features/notes/presentation/notes_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -229,11 +230,11 @@ class _AddNoteSheetState extends State<_AddNoteSheet> {
         Text('ملاحظة جديدة', style: GoogleFonts.cairo(
             fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const Gap(14),
-        TextField(controller: _title, textDirection: TextDirection.rtl,
+        TextField(controller: _title, textDirection: ui.TextDirection.rtl,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'العنوان (اختياري)')),
         const Gap(10),
-        TextField(controller: _content, textDirection: TextDirection.rtl, maxLines: 5,
+        TextField(controller: _content, textDirection: ui.TextDirection.rtl, maxLines: 5,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'المحتوى', alignLabelWithHint: true)),
         const Gap(14),
@@ -323,11 +324,11 @@ class _EditNoteSheetState extends State<_EditNoteSheet> {
         Text('تعديل الملاحظة', style: GoogleFonts.cairo(
             fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const Gap(14),
-        TextField(controller: _title, textDirection: TextDirection.rtl,
+        TextField(controller: _title, textDirection: ui.TextDirection.rtl,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'العنوان (اختياري)')),
         const Gap(10),
-        TextField(controller: _content, textDirection: TextDirection.rtl, maxLines: 5,
+        TextField(controller: _content, textDirection: ui.TextDirection.rtl, maxLines: 5,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'المحتوى', alignLabelWithHint: true)),
         const Gap(14),

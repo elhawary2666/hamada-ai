@@ -1,4 +1,5 @@
 // lib/features/settings/presentation/settings_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gap/gap.dart';
@@ -140,7 +141,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           TextField(
             controller:    _keyCtrl,
             obscureText:   _obscure,
-            textDirection: TextDirection.ltr,
+            textDirection: ui.TextDirection.ltr,
             style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 12, color: AppColors.textPrimary),

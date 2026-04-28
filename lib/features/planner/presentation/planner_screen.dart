@@ -1,4 +1,5 @@
 // lib/features/planner/presentation/planner_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -510,7 +511,7 @@ class _AddTaskSheetState extends State<_AddTaskSheet> {
         const Gap(14),
         TextField(
           controller:    _ctrl,
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           autofocus:     true,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(
@@ -649,7 +650,7 @@ class _AddAppointmentSheetState extends State<_AddAppointmentSheet> {
         const Gap(14),
         TextField(
           controller:    _titleCtrl,
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           autofocus:     true,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(
@@ -659,7 +660,7 @@ class _AddAppointmentSheetState extends State<_AddAppointmentSheet> {
         const Gap(10),
         TextField(
           controller:    _locationCtrl,
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(
             labelText: 'المكان (اختياري)',
@@ -782,7 +783,7 @@ class _EditTaskSheetState extends State<_EditTaskSheet> {
             fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const Gap(14),
         TextField(
-          controller: _ctrl, textDirection: TextDirection.rtl, autofocus: true,
+          controller: _ctrl, textDirection: ui.TextDirection.rtl, autofocus: true,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'عنوان المهمة'),
         ),
@@ -908,13 +909,13 @@ class _EditAppointmentSheetState extends State<_EditAppointmentSheet> {
             fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const Gap(14),
         TextField(
-          controller: _titleCtrl, textDirection: TextDirection.rtl, autofocus: true,
+          controller: _titleCtrl, textDirection: ui.TextDirection.rtl, autofocus: true,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(labelText: 'عنوان الموعد'),
         ),
         const Gap(10),
         TextField(
-          controller: _locationCtrl, textDirection: TextDirection.rtl,
+          controller: _locationCtrl, textDirection: ui.TextDirection.rtl,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(
             labelText: 'المكان (اختياري)',

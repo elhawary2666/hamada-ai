@@ -1,5 +1,6 @@
 // lib/features/relationships/presentation/relationships_screen.dart
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -297,13 +298,13 @@ class _AddRelSheetState extends State<_AddRelSheet> {
               fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
           const Gap(14),
           TextField(
-            controller: _nameCtrl, textDirection: TextDirection.rtl, autofocus: true,
+            controller: _nameCtrl, textDirection: ui.TextDirection.rtl, autofocus: true,
             style: GoogleFonts.cairo(color: AppColors.textPrimary),
             decoration: InputDecoration(labelText: 'الاسم', hintText: 'مثال: أحمد'),
           ),
           const Gap(10),
           TextField(
-            controller: _relationCtrl, textDirection: TextDirection.rtl,
+            controller: _relationCtrl, textDirection: ui.TextDirection.rtl,
             style: GoogleFonts.cairo(color: AppColors.textPrimary),
             decoration: InputDecoration(labelText: 'العلاقة (اختياري)', hintText: 'صاحب / أخ / زميل'),
           ),

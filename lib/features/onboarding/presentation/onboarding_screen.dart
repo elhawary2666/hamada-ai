@@ -1,4 +1,5 @@
 // lib/features/onboarding/presentation/onboarding_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -85,7 +86,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 TextField(
                   controller:    _ctrl,
                   obscureText:   _obscure,
-                  textDirection: TextDirection.ltr,
+                  textDirection: ui.TextDirection.ltr,
                   style: const TextStyle(fontFamily: 'monospace',
                       fontSize: 13, color: AppColors.textPrimary),
                   decoration: InputDecoration(

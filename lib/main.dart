@@ -1,4 +1,5 @@
 // lib/main.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -131,7 +132,7 @@ class _HamadaAppState extends ConsumerState<HamadaApp>
         theme:                      AppTheme.dark,
         routerConfig:               router,
         builder: (context, child) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           child: Column(children: [
             connectivity.whenOrNull(
               data: (s) => s == ConnectivityStatus.offline

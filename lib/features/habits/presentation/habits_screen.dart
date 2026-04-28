@@ -1,4 +1,5 @@
 // lib/features/habits/presentation/habits_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -242,7 +243,7 @@ class _AddHabitSheetState extends State<_AddHabitSheet> {
             fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
         const Gap(14),
         TextField(
-          controller: _ctrl, textDirection: TextDirection.rtl, autofocus: true,
+          controller: _ctrl, textDirection: ui.TextDirection.rtl, autofocus: true,
           style: GoogleFonts.cairo(color: AppColors.textPrimary),
           decoration: InputDecoration(
               labelText: 'اسم العادة', hintText: 'مثال: مشي 30 دقيقة'),

@@ -1,4 +1,5 @@
 // lib/features/chat/presentation/chat_screen.dart
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -203,7 +204,7 @@ class ChatScreen extends HookConsumerWidget {
         title: TextField(
           controller:    searchCtrl,
           autofocus:     true,
-          textDirection: TextDirection.rtl,
+          textDirection: ui.TextDirection.rtl,
           style: GoogleFonts.cairo(
               fontSize: 15, color: AppColors.textPrimary),
           decoration: InputDecoration(
@@ -497,7 +498,7 @@ class _BubbleBody extends StatelessWidget {
                   style: GoogleFonts.cairo(
                       color: AppColors.userBubbleText,
                       fontSize: 15, height: 1.5),
-                  textDirection: TextDirection.rtl)
+                  textDirection: ui.TextDirection.rtl)
               : MarkdownBody(
                   data: message.content,
                   styleSheet: MarkdownStyleSheet(
@@ -694,7 +695,7 @@ class _InputBar extends HookWidget {
               child: TextField(
                 controller:      controller,
                 maxLines:        null,
-                textDirection:   TextDirection.rtl,
+                textDirection:   ui.TextDirection.rtl,
                 onChanged:       onChanged,
                 onSubmitted:     (_) { if (!isGenerating) onSend(); },
                 textInputAction: TextInputAction.newline,

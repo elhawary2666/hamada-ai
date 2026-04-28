@@ -1,4 +1,5 @@
 // lib/features/finance/presentation/finance_screen.dart
+import 'dart:ui' as ui;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -586,7 +587,7 @@ class _GoalCard extends StatelessWidget {
         content: TextField(
           controller:   ctrl,
           keyboardType: TextInputType.number,
-          textDirection: TextDirection.ltr,
+          textDirection: ui.TextDirection.ltr,
           decoration: InputDecoration(
             hintText: 'المبلغ بالجنيه',
             hintStyle: GoogleFonts.cairo(color: AppColors.textHint),
@@ -871,7 +872,7 @@ class _AddFab extends StatelessWidget {
             TextField(
               controller:    amountCtrl,
               keyboardType:  TextInputType.number,
-              textDirection: TextDirection.ltr,
+              textDirection: ui.TextDirection.ltr,
               style: GoogleFonts.cairo(
                   fontSize: 22, fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary),
@@ -885,7 +886,7 @@ class _AddFab extends StatelessWidget {
             const Gap(8),
             TextField(
               controller: descCtrl,
-              textDirection: TextDirection.rtl,
+              textDirection: ui.TextDirection.rtl,
               style: GoogleFonts.cairo(
                   fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
@@ -1006,7 +1007,7 @@ class _AddFab extends StatelessWidget {
             const Gap(10),
             TextField(
               controller: titleCtrl,
-              textDirection: TextDirection.rtl,
+              textDirection: ui.TextDirection.rtl,
               style: GoogleFonts.cairo(
                   fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
@@ -1019,7 +1020,7 @@ class _AddFab extends StatelessWidget {
             TextField(
               controller:   targetCtrl,
               keyboardType: TextInputType.number,
-              textDirection: TextDirection.ltr,
+              textDirection: ui.TextDirection.ltr,
               style: GoogleFonts.cairo(
                   fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
@@ -1156,7 +1157,7 @@ class _AddFab extends StatelessWidget {
             ]),
             const Gap(12),
             TextField(
-              controller: nameCtrl, textDirection: TextDirection.rtl, autofocus: true,
+              controller: nameCtrl, textDirection: ui.TextDirection.rtl, autofocus: true,
               style: GoogleFonts.cairo(color: AppColors.textPrimary),
               decoration: InputDecoration(labelText: 'الاسم', hintText: 'مثال: أحمد'),
             ),
@@ -1172,7 +1173,7 @@ class _AddFab extends StatelessWidget {
             ),
             const Gap(8),
             TextField(
-              controller: notesCtrl, textDirection: TextDirection.rtl,
+              controller: notesCtrl, textDirection: ui.TextDirection.rtl,
               style: GoogleFonts.cairo(color: AppColors.textPrimary),
               decoration: InputDecoration(labelText: 'ملاحظة (اختياري)'),
             ),
@@ -1270,7 +1271,7 @@ class _AddFab extends StatelessWidget {
             const Gap(10),
             TextField(
               controller: titleCtrl,
-              textDirection: TextDirection.rtl,
+              textDirection: ui.TextDirection.rtl,
               style: GoogleFonts.cairo(
                   fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
@@ -1283,7 +1284,7 @@ class _AddFab extends StatelessWidget {
             TextField(
               controller:   amountCtrl,
               keyboardType: TextInputType.number,
-              textDirection: TextDirection.ltr,
+              textDirection: ui.TextDirection.ltr,
               style: GoogleFonts.cairo(
                   fontSize: 14, color: AppColors.textPrimary),
               decoration: InputDecoration(
