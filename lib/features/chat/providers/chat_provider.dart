@@ -331,7 +331,7 @@ class ChatNotifier extends _$ChatNotifier {
   void _generateSuggestions(String userMsg, String aiReply) {
     Future.microtask(() async {
       try {
-        // ai already declared above
+        final ai = ref.read(aiServiceProvider);
         if (!ai.isReady) return;
         final prompt =
             'بناءً على رد حماده ده:\n"${aiReply.substring(0, aiReply.length.clamp(0, 200))}"\n\n'
