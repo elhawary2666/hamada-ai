@@ -78,7 +78,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   fontSize: 15, fontWeight: FontWeight.bold,
                   color: AppColors.textPrimary)),
                 const Gap(4),
-                Text('روح groq.com ← سجّل مجاناً ← API Keys ← Create Key',
+                Text('روح aistudio.google.com ← Get API key ← Create API key',
                   style: GoogleFonts.cairo(fontSize: 12,
                       color: AppColors.textSecondary, height: 1.5)),
                 const Gap(14),
@@ -90,7 +90,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   style: const TextStyle(fontFamily: 'monospace',
                       fontSize: 13, color: AppColors.textPrimary),
                   decoration: InputDecoration(
-                    hintText:  'gsk_...',
+                    hintText:  'AIzaSy...',
                     hintStyle: GoogleFonts.cairo(color: AppColors.textHint),
                     prefixIcon: const Icon(Icons.key_outlined,
                         color: AppColors.textSecondary, size: 18),
@@ -140,8 +140,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Future<void> _save() async {
     final key = _ctrl.text.trim();
     if (key.isEmpty) { setState(() => _error = 'ادخل الـ API key'); return; }
-    if (!key.startsWith('gsk_') || key.length < 20) {
-      setState(() => _error = 'الـ key لازم يبدأ بـ gsk_'); return;
+    if (key.length < 20) {
+      setState(() => _error = 'الـ key قصير جداً'); return;
     }
     setState(() { _loading = true; _error = null; });
     try {
