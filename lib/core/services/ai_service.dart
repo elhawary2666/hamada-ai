@@ -69,7 +69,7 @@ class HamadaResponse {
       required this.tokensPerSec, required this.totalTokens});
 }
 
-@riverpod
+@Riverpod(keepAlive: true)
 AiService aiService(AiServiceRef ref) => AiService(
   db:            ref.watch(databaseHelperProvider),
   memoryService: ref.watch(memoryServiceProvider),
@@ -190,7 +190,8 @@ class AiService {
     required List<Map<String, dynamic>> history,
     void Function(String token)? onToken,
   }) async {
-    if (_apiKey.isEmpty || !_ready) await initialize();
+    // Always ensure key is loaded from DB (handles fresh provider instances)
+    await initialize();
     if (_apiKey.isEmpty || !_ready) {
       throw Exception('محتاج Gemini API key — روح الإعدادات 🔑');
     }
@@ -263,7 +264,9 @@ class AiService {
         throw Exception('الاتصال بطيء — جرّب تاني 📶');
       }
       if (msg.contains('🔑') || msg.contains('حد يومي') || msg.contains('خطأ (')) rethrow;
-      throw Exception('مشكلة في الاتصال — تأكد من النت 📶');
+      // Log the real error for debugging
+      _log.e('Gemini chat error: $msg');
+      throw Exception('مشكلة: $msg 📶');
     }
   }
 
