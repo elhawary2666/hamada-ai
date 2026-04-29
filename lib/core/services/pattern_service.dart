@@ -251,12 +251,9 @@ class PatternService {
       final memories = await db.searchMemoriesFts(title, limit: 5);
       if (memories.isEmpty) return '';
       final memStr   = memories.take(3).map((m) => m['content'] as String).join(' | ');
-      final prompt   = 'أنت حماده. بكرة عند صاحبك موعد: "$title" ${location.isNotEmpty ? "في $location" : ""}.
-'
-          'ذكريات مرتبطة: $memStr
-'
-          'اكتب جملة أو جملتين تجهيز مفيد قبل الموعد ده.
-'
+      final prompt   = 'أنت حماده. بكرة عند صاحبك موعد: "$title" ${location.isNotEmpty ? "في $location" : ""}.\n'
+          'ذكريات مرتبطة: $memStr\n'
+          'اكتب جملة أو جملتين تجهيز مفيد قبل الموعد ده.\n'
           'رد: {"reply":"..."}';
       return await ai.singleShot(prompt, maxTokens: 100);
     } catch (_) { return ''; }
