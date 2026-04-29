@@ -4,7 +4,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:logger/logger.dart';
 
-const int _kDbVersion = 5;
+const int _kDbVersion = 6;
 const String _kDbName = 'hamada_ai.db';
 
 abstract class Tables {
@@ -26,6 +26,10 @@ abstract class Tables {
   static const habitLogs           = 'habit_logs';
   static const relationships       = 'relationships';
   static const billSplits          = 'bill_splits';
+  static const patterns            = 'spending_patterns';
+  static const dailyTimeline       = 'daily_timeline';
+  static const appErrors           = 'app_errors';
+  static const lifeBalance         = 'life_balance';
 }
 
 class DatabaseHelper {
@@ -76,6 +80,10 @@ class DatabaseHelper {
       () => _createHabitLogs(db),
       () => _createRelationships(db),
       () => _createBillSplits(db),
+      () => _createPatterns(db),
+      () => _createDailyTimeline(db),
+      () => _createAppErrors(db),
+      () => _createLifeBalance(db),
       () => _createFts(db),
       () => _createIndexes(db),
     ]) {
@@ -110,6 +118,13 @@ class DatabaseHelper {
       try { await _createRelationships(db); } catch (_) {}
       try { await _createBillSplits(db); } catch (_) {}
       _log.i('v5: Added habits, habit_logs, relationships, bill_splits');
+    }
+    if (oldV < 6) {
+      try { await _createPatterns(db); } catch (_) {}
+      try { await _createDailyTimeline(db); } catch (_) {}
+      try { await _createAppErrors(db); } catch (_) {}
+      try { await _createLifeBalance(db); } catch (_) {}
+      _log.i('v6: Added patterns, daily_timeline, app_errors, life_balance');
     }
   }
 
@@ -231,6 +246,44 @@ class DatabaseHelper {
     CREATE TABLE IF NOT EXISTS ${Tables.billSplits}(
       id TEXT PRIMARY KEY, title TEXT NOT NULL,
       total_amount REAL NOT NULL, payers TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )""");
+
+  Future<void> _createPatterns(DatabaseExecutor db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS ${Tables.patterns}(
+      id           TEXT PRIMARY KEY,
+      pattern_type TEXT NOT NULL,
+      description  TEXT NOT NULL,
+      data         TEXT DEFAULT '{}',
+      confidence   REAL DEFAULT 0.5,
+      first_seen   INTEGER NOT NULL,
+      last_seen    INTEGER NOT NULL,
+      occurrence   INTEGER DEFAULT 1
+    )""");
+
+  Future<void> _createDailyTimeline(DatabaseExecutor db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS ${Tables.dailyTimeline}(
+      id        TEXT PRIMARY KEY,
+      date      TEXT NOT NULL,
+      content   TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )""");
+
+  Future<void> _createAppErrors(DatabaseExecutor db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS ${Tables.appErrors}(
+      id          TEXT PRIMARY KEY,
+      error_type  TEXT NOT NULL,
+      description TEXT NOT NULL,
+      context     TEXT DEFAULT '{}',
+      resolved    INTEGER DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    )""");
+
+  Future<void> _createLifeBalance(DatabaseExecutor db) => db.execute("""
+    CREATE TABLE IF NOT EXISTS ${Tables.lifeBalance}(
+      id        TEXT PRIMARY KEY,
+      week_key  TEXT NOT NULL UNIQUE,
+      data      TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )""");
 
@@ -714,6 +767,137 @@ class DatabaseHelper {
     return stats;
   }
 
+  // ─── PATTERNS ─────────────────────────────────────────────
+
+  Future<List<Map<String,dynamic>>> getAllPatterns() async {
+    final d = await database;
+    return d.query(Tables.patterns, orderBy: 'last_seen DESC');
+  }
+
+  Future<void> upsertPattern(String type, String desc, Map<String,dynamic> data, double confidence) async {
+    final d   = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existing = await d.query(Tables.patterns,
+        where: 'pattern_type = ?', whereArgs: [type], limit: 1);
+    if (existing.isEmpty) {
+      await d.insert(Tables.patterns, {
+        'id': DateTime.now().microsecondsSinceEpoch.toString(),
+        'pattern_type': type, 'description': desc,
+        'data': jsonEncode(data), 'confidence': confidence,
+        'first_seen': now, 'last_seen': now, 'occurrence': 1,
+      });
+    } else {
+      final id = existing.first['id'] as String;
+      final occ = (existing.first['occurrence'] as int? ?? 1) + 1;
+      await d.update(Tables.patterns, {
+        'description': desc, 'data': jsonEncode(data),
+        'confidence': confidence, 'last_seen': now, 'occurrence': occ,
+      }, where: 'id = ?', whereArgs: [id]);
+    }
+  }
+
+  // ─── DAILY TIMELINE ────────────────────────────────────────
+
+  Future<void> saveDailyTimeline(String date, String content) async {
+    final d   = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await d.rawInsert(
+      'INSERT OR REPLACE INTO ${Tables.dailyTimeline}(id, date, content, created_at) VALUES(?,?,?,?)',
+      [date, date, content, now],
+    );
+  }
+
+  Future<String?> getDailyTimeline(String date) async {
+    final d    = await database;
+    final rows = await d.query(Tables.dailyTimeline,
+        where: 'date = ?', whereArgs: [date], limit: 1);
+    return rows.isEmpty ? null : rows.first['content'] as String?;
+  }
+
+  Future<List<Map<String,dynamic>>> getRecentTimelines({int days = 7}) async {
+    final d      = await database;
+    final cutoff = DateTime.now().subtract(Duration(days: days));
+    return d.query(Tables.dailyTimeline,
+        where: 'date >= ?',
+        whereArgs: ['${cutoff.year}-${cutoff.month.toString().padLeft(2,'0')}-${cutoff.day.toString().padLeft(2,'0')}'],
+        orderBy: 'date DESC');
+  }
+
+  // ─── APP ERRORS ────────────────────────────────────────────
+
+  Future<void> logError(String type, String desc, Map<String,dynamic> ctx) async {
+    final d   = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await d.insert(Tables.appErrors, {
+      'id': now.toString(), 'error_type': type, 'description': desc,
+      'context': jsonEncode(ctx), 'resolved': 0, 'created_at': now,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String,dynamic>>> getUnresolvedErrors() async {
+    final d = await database;
+    return d.query(Tables.appErrors, where: 'resolved = 0', orderBy: 'created_at DESC');
+  }
+
+  Future<void> markErrorResolved(String id) async {
+    final d = await database;
+    await d.update(Tables.appErrors, {'resolved': 1}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ─── LIFE BALANCE ──────────────────────────────────────────
+
+  Future<void> saveLifeBalance(String weekKey, Map<String,dynamic> data) async {
+    final d   = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await d.rawInsert(
+      'INSERT OR REPLACE INTO ${Tables.lifeBalance}(id, week_key, data, created_at) VALUES(?,?,?,?)',
+      [weekKey, weekKey, jsonEncode(data), now],
+    );
+  }
+
+  Future<Map<String,dynamic>?> getLifeBalance(String weekKey) async {
+    final d    = await database;
+    final rows = await d.query(Tables.lifeBalance,
+        where: 'week_key = ?', whereArgs: [weekKey], limit: 1);
+    if (rows.isEmpty) return null;
+    try { return jsonDecode(rows.first['data'] as String) as Map<String,dynamic>; }
+    catch (_) { return null; }
+  }
+
+  Future<List<Map<String,dynamic>>> getRecentLifeBalance({int weeks = 4}) async {
+    final d = await database;
+    return d.query(Tables.lifeBalance, orderBy: 'created_at DESC', limit: weeks);
+  }
+
+  Future<int> getTotalMessageCount() async {
+    final d = await database;
+    final r = await d.rawQuery('SELECT COUNT(*) as c FROM ${Tables.messages}');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  Future<Map<String,int>> getChatTopics() async {
+    final d    = await database;
+    final msgs = await d.query(Tables.messages,
+        where: "role = 'user'", orderBy: 'timestamp DESC', limit: 100);
+    final topicCount = <String,int>{};
+    final topics = {
+      'شغل': ['شغل','مدير','موظف','مشروع','راتب','اجتماع','كلية','دراسة'],
+      'صحة': ['صحة','دكتور','دواء','تمرين','رياضة','وجع','مريض'],
+      'عيلة': ['أهل','ماما','بابا','أخ','أخت','مراتي','جوزي','عيلة'],
+      'مصاريف': ['صرفت','دفعت','فلوس','مصاريف','ميزانية','رصيد'],
+      'مزاج': ['تعبت','زهقت','مبسوط','حزين','قلقان','تعيس','سعيد'],
+    };
+    for (final msg in msgs) {
+      final content = (msg['content'] as String? ?? '').toLowerCase();
+      for (final e in topics.entries) {
+        if (e.value.any((kw) => content.contains(kw))) {
+          topicCount[e.key] = (topicCount[e.key] ?? 0) + 1;
+        }
+      }
+    }
+    return topicCount;
+  }
+
   Future<void> clearAll() async {
     final db     = await database;
     final tables = [
@@ -723,6 +907,7 @@ class DatabaseHelper {
       Tables.assets, Tables.debts, Tables.tasks, Tables.appointments,
       Tables.financialGoals, Tables.recurringTx, 'budgets',
       Tables.habits, Tables.habitLogs, Tables.relationships, Tables.billSplits,
+      Tables.patterns, Tables.dailyTimeline, Tables.appErrors, Tables.lifeBalance,
     ];
     for (final t in tables) { try { await db.delete(t); } catch (_) {} }
     _log.i('All tables cleared');

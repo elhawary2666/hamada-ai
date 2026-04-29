@@ -10,6 +10,8 @@ import '../../planner/presentation/planner_screen.dart';
 import '../../notes/presentation/notes_screen.dart';
 import '../../habits/presentation/habits_screen.dart';
 import '../../../core/services/ai_service.dart';
+import '../../../core/services/self_heal_service.dart';
+import '../../../core/services/pattern_service.dart';
 import '../data/chat_repository.dart';
 import '../domain/models/chat_message_model.dart';
 
@@ -37,8 +39,10 @@ class ChatState {
   final double                 tokensPerSec;
   final bool                   isModelReady;
   final List<String>           suggestedReplies;
-  final PendingAction?         pendingAction;   // ✅ IMPROVEMENT 2
-  final String?                conversationSummary; // ✅ IMPROVEMENT 1
+  final PendingAction?         pendingAction;
+  final String?                conversationSummary;
+  final UserMood               currentMood;
+  final List<PatternInsight>   insights;
 
   const ChatState({
     this.messages              = const [],
@@ -51,6 +55,8 @@ class ChatState {
     this.suggestedReplies      = const [],
     this.pendingAction,
     this.conversationSummary,
+    this.currentMood           = UserMood.neutral,
+    this.insights              = const [],
   });
 
   bool get isGenerating =>
@@ -68,6 +74,8 @@ class ChatState {
     PendingAction?          pendingAction,
     bool                    clearPending      = false,
     String?                 conversationSummary,
+    UserMood?               currentMood,
+    List<PatternInsight>?   insights,
   }) => ChatState(
     messages:            messages            ?? this.messages,
     status:              status              ?? this.status,
@@ -79,6 +87,8 @@ class ChatState {
     suggestedReplies:    suggestedReplies    ?? this.suggestedReplies,
     pendingAction:       clearPending ? null : (pendingAction ?? this.pendingAction),
     conversationSummary: conversationSummary ?? this.conversationSummary,
+    currentMood:         currentMood         ?? this.currentMood,
+    insights:            insights            ?? this.insights,
   );
 }
 
@@ -119,6 +129,18 @@ class ChatNotifier extends _$ChatNotifier {
     } else {
       state = state.copyWith(messages: msgs);
     }
+    // Run self-heal + pattern analysis in background
+    Future.microtask(() async {
+      try {
+        final healer = ref.read(selfHealServiceProvider);
+        await healer.runHealthCheck();
+        final patterns = ref.read(patternServiceProvider);
+        final insights = await patterns.analyzePatterns();
+        if (insights.isNotEmpty) {
+          state = state.copyWith(insights: insights);
+        }
+      } catch (_) {}
+    });
   }
 
   // ✅ IMPROVEMENT 1: Context with summary of old messages
@@ -142,25 +164,83 @@ class ChatNotifier extends _$ChatNotifier {
     return history;
   }
 
-  // Trigger summarization when messages exceed threshold
+  // ✅ OPTIMIZED: Local summarization — no API call needed
+  // Just takes the first 5 user messages as a brief context summary
   void _maybeSummarize() {
     final msgs = state.messages.where((m) => !m.isEmpty && !m.isError).toList();
-    // Every 20 messages, summarize the older half
-    if (msgs.length > 0 && msgs.length % 20 == 0) {
-      Future.microtask(() async {
-        try {
-          final ai = ref.read(aiServiceProvider);
-          if (!ai.isReady) return;
-          final oldMsgs = msgs.sublist(0, msgs.length - 10);
-          final history = oldMsgs.map((m) => {'role': m.role, 'content': m.content}).toList();
-          final summary = await ai.summarizeConversation(history);
-          if (summary.isNotEmpty) {
-            state = state.copyWith(conversationSummary: summary);
-          }
-        } catch (_) {}
-      });
+    if (msgs.length < 25 || state.conversationSummary != null) return;
+    // Build a simple local summary from first user messages (no API call)
+    final oldUserMsgs = msgs
+        .where((m) => m.role == 'user')
+        .take(8)
+        .map((m) => m.content.length > 80 ? m.content.substring(0, 80) : m.content)
+        .toList();
+    if (oldUserMsgs.isEmpty) return;
+    final summary = 'محادثات سابقة تضمنت: ${oldUserMsgs.join(' | ')}';
+    state = state.copyWith(conversationSummary: summary);
+  }
+
+
+  // ═══════════════════════════════════════════════════════
+  // MATH INTERCEPTOR — solves arithmetic before AI sees it
+  // Handles: اخصم/اطرح/زود/اضف/اضرب/اقسم + numbers
+  // Returns null if no math found, or the enriched message
+  // ═══════════════════════════════════════════════════════
+  static final _numPattern = RegExp(r'[\d,\.]+');
+
+  String? _tryResolveMath(String msg) {
+    try {
+      final normalized = msg
+          .replaceAll('٠','0').replaceAll('١','1').replaceAll('٢','2')
+          .replaceAll('٣','3').replaceAll('٤','4').replaceAll('٥','5')
+          .replaceAll('٦','6').replaceAll('٧','7').replaceAll('٨','8')
+          .replaceAll('٩','9').replaceAll(',', '');
+
+      final nums = _numPattern.allMatches(normalized)
+          .map((m) => double.tryParse(m.group(0) ?? ''))
+          .where((n) => n != null)
+          .cast<double>()
+          .toList();
+
+      if (nums.length < 2) return null;
+      final a = nums[0];
+      final b = nums[1];
+      double? result;
+      final lower = normalized;
+
+      // ✅ FIX: "اخصم/اطرح X من Y" → Y - X  (reverse order when 'من' present)
+      if (_hasAny(lower, ['اخصم','اطرح','طرح','ناقص'])) {
+        result = lower.contains('من') ? b - a : a - b;
+      }
+      else if (_hasAny(lower, ['اضف','اجمع','زود','جمع','زيادة'])) {
+        result = a + b;
+      }
+      // ✅ FIX: removed 'في' — too common as preposition in Arabic
+      else if (_hasAny(lower, ['اضرب','ضرب'])) {
+        result = a * b;
+      }
+      else if (_hasAny(lower, ['اقسم','قسمة','قسّم'])) {
+        if (b == 0) return null;
+        result = a / b;
+      }
+      else if (_hasAny(lower, ['بالمية','بالمئة','%'])) {
+        result = (a * b) / 100;
+      }
+
+      if (result == null) return null;
+
+      final formatted = (result == result.truncateToDouble())
+          ? result.toInt().toString()
+          : result.toStringAsFixed(2);
+
+      return '$msg\n[نتيجة الحساب: $formatted]';
+    } catch (_) {
+      return null;
     }
   }
+
+  bool _hasAny(String text, List<String> keywords) =>
+      keywords.any((k) => text.contains(k));
 
   Future<void> sendMessage(String text) async {
     final trimmed = text.trim();
@@ -173,6 +253,10 @@ class ChatNotifier extends _$ChatNotifier {
       state = state.copyWith(isModelReady: true);
     }
     state = state.copyWith(suggestedReplies: []);
+
+    // Mood detection
+    final mood  = ai.detectMood(trimmed);
+    state = state.copyWith(currentMood: mood);
 
     final userMsg = ChatMessageModel.user(
         content: trimmed, sessionId: state.sessionId);
@@ -189,9 +273,13 @@ class ChatNotifier extends _$ChatNotifier {
 
     try {
       final history = _buildContextHistory();
+      // ✅ MATH INTERCEPTOR: resolve arithmetic before sending to LLM
+      final mathEnriched = _tryResolveMath(trimmed);
+      final aiMessage = mathEnriched ?? trimmed;
+
       String buf = '';
       final response = await ai.chat(
-        userMessage: trimmed,
+        userMessage: aiMessage,
         sessionId:   state.sessionId,
         history:     history,
         onToken: (token) {
@@ -223,8 +311,8 @@ class ChatNotifier extends _$ChatNotifier {
         clearError:      true,
       );
 
-      _generateSuggestions(trimmed, displayText);
-      _maybeSummarize(); // ✅ IMPROVEMENT 1
+      _maybeSummarize();
+      _maybeShareInsight();
       _parseFunctionCallAndExecute(response.text, trimmed);
 
     } catch (e) {
@@ -243,7 +331,7 @@ class ChatNotifier extends _$ChatNotifier {
   void _generateSuggestions(String userMsg, String aiReply) {
     Future.microtask(() async {
       try {
-        final ai = ref.read(aiServiceProvider);
+        // ai already declared above
         if (!ai.isReady) return;
         final prompt =
             'بناءً على رد حماده ده:\n"${aiReply.substring(0, aiReply.length.clamp(0, 200))}"\n\n'
@@ -305,6 +393,7 @@ class ChatNotifier extends _$ChatNotifier {
     'احفظ','ملاحظة','فكرة','مهمة','عندي','محتاج','فاكرني','موعد','اجتماع',
     'حجز','عادة','ابدأ','هعمل','ذكرني','ميزانية','حد أقصى','قسّم','الحساب',
     'صاحبي','فلان','بيحب','عنده',
+    'دين','مديون','قرض','خليت','ادفعله','هيدفعلي','باقي','تقسيط',
   ];
 
   bool _looksLikeCommand(String msg) {
@@ -317,7 +406,7 @@ class ChatNotifier extends _$ChatNotifier {
       try {
         var parsed = _tryParseActionJson(aiResponse);
 
-        // ✅ Layer 1A: retry ONLY if message looks like a command
+        // Retry ONLY if message looks like a command
         if (parsed == null && _looksLikeCommand(originalUserMsg)) {
           parsed = await _retryFunctionCall(originalUserMsg, aiResponse);
         }
@@ -347,7 +436,10 @@ class ChatNotifier extends _$ChatNotifier {
         if (action == null || data == null) return;
         await _dispatchAction(action, data, db, _uuid.v4(), now);
 
-      } catch (_) {}
+      } catch (e) {
+        // Show error in chat so user knows something went wrong
+        _appendAssistant('⚠️ حصل خطأ في حفظ البيانات — جرّب تاني: $e');
+      }
     });
   }
 
@@ -386,6 +478,9 @@ class ChatNotifier extends _$ChatNotifier {
       case 'split_bill':
         await _executeSplitBill(db, data, id, now);
         break;
+      case 'add_debt':
+        await _executeAddDebt(db, data, id, now);
+        break;
     }
   }
 
@@ -412,27 +507,24 @@ class ChatNotifier extends _$ChatNotifier {
     }
   }
 
+  // ✅ UNIFIED PARSER: handles new {"reply":..., "action":..., "memories":[...]} format
   Map<String, dynamic>? _tryParseActionJson(String raw) {
     try {
-      // ✅ FIX: search for JSON anywhere in response, not just prefix
       final clean = raw.replaceAll('```json', '').replaceAll('```', '');
-      final s = clean.indexOf('{"action"');
-      if (s == -1) {
-        // also try generic { with action key somewhere inside
-        final s2 = clean.indexOf('{');
-        if (s2 == -1) return null;
-        final e2 = clean.lastIndexOf('}');
-        if (e2 <= s2) return null;
-        final decoded2 = json.decode(clean.substring(s2, e2 + 1));
-        if (decoded2 is! Map<String, dynamic>) return null;
-        if (!decoded2.containsKey('action') || !decoded2.containsKey('data')) return null;
-        return decoded2;
-      }
-      final e = clean.lastIndexOf('}');
-      if (e <= s) return null;
-      final decoded = json.decode(clean.substring(s, e + 1));
+      final start = clean.indexOf('{');
+      if (start == -1) return null;
+      final end = clean.lastIndexOf('}');
+      if (end <= start) return null;
+
+      final decoded = json.decode(clean.substring(start, end + 1));
       if (decoded is! Map<String, dynamic>) return null;
-      if (!decoded.containsKey('action') || !decoded.containsKey('data')) return null;
+
+      // Accept if it has action, actions, OR reply (unified format)
+      final hasAction  = decoded.containsKey('action')  && decoded.containsKey('data');
+      final hasActions = decoded.containsKey('actions') && decoded['actions'] is List;
+      final hasReply   = decoded.containsKey('reply');
+
+      if (!hasAction && !hasActions && !hasReply) return null;
       return decoded;
     } catch (_) {
       return null;
@@ -442,8 +534,13 @@ class ChatNotifier extends _$ChatNotifier {
   String _extractUserMessage(String raw) {
     final parsed = _tryParseActionJson(raw);
     if (parsed == null) return raw;
+    // ✅ NEW: read from 'reply' field (unified format)
+    final reply = parsed['reply'] as String?;
+    if (reply != null && reply.trim().isNotEmpty) return reply.trim();
+    // Fallback for old 'message' field
     final msg = parsed['message'] as String?;
     if (msg != null && msg.trim().isNotEmpty) return msg.trim();
+    // Last resort: action-based default
     final action = parsed['action'] as String?;
     switch (action) {
       case 'add_transaction':       return 'تمام، سجلت المعاملة ✅';
@@ -455,13 +552,14 @@ class ChatNotifier extends _$ChatNotifier {
       case 'set_budget':            return 'ضبطت الميزانية ✅';
       case 'add_relationship_note': return 'حفظت الملاحظة ✅';
       case 'split_bill':            return 'قسّمت الحساب ✅';
-      default:                      return 'تمام ✅';
+      case 'add_debt':              return 'سجلت الدين ✅';
+      default:                      return raw; // show raw if no structured format
     }
   }
 
   // ── EXECUTORS ─────────────────────────────────────────────
 
-  static const _kConfirmThreshold = 200.0; // ج.م
+  static const _kConfirmThreshold = 500.0; // ج.م — منطقي أكتر للسوق المصري
 
   Future<void> _executeAddTransaction(
       dynamic db, Map<String, dynamic> data, String id, int now) async {
@@ -504,6 +602,14 @@ class ChatNotifier extends _$ChatNotifier {
       'category': category, 'ai_category': category, 'description': desc,
       'date': now, 'is_recurring': 0, 'recurring_id': null,
       'payment_method': 'cash', 'created_at': now,
+    });
+    // Self-heal: verify write succeeded silently
+    Future.microtask(() async {
+      try {
+        final healer = ref.read(selfHealServiceProvider);
+        final ok = await healer.verifyTransactionWrite(id);
+        if (!ok) _appendAssistant('⚠️ مش عارف أتأكد من الحفظ — افتح شاشة الحسابات للتأكد');
+      } catch (_) {}
     });
     ref.invalidate(financeNotifierProvider);
   }
@@ -653,6 +759,26 @@ class ChatNotifier extends _$ChatNotifier {
     }
   }
 
+  Future<void> _executeAddDebt(
+      dynamic db, Map<String, dynamic> data, String id, int now) async {
+    final name      = (data['name']      as String?)?.trim() ?? '';
+    final amount    = _toDouble(data['amount']);
+    final direction = (data['direction'] as String?)?.trim() ?? 'owe';
+    if (name.isEmpty || amount == null || amount <= 0) return;
+    final validDir = (direction == 'owe' || direction == 'owed') ? direction : 'owe';
+    await db.insert('debts', {
+      'id':         id,
+      'name':       name,
+      'amount':     amount,
+      'direction':  validDir,
+      'notes':      (data['notes'] as String?)?.trim() ?? '',
+      'due_date':   null,
+      'is_paid':    0,
+      'created_at': now,
+    });
+    ref.invalidate(financeNotifierProvider);
+  }
+
   Future<void> _executeSplitBill(
       dynamic db, Map<String, dynamic> data, String id, int now) async {
     final title  = (data['title'] as String?)?.trim() ?? 'حساب';
@@ -705,6 +831,21 @@ class ChatNotifier extends _$ChatNotifier {
     final msg = ChatMessageModel.assistant(
         content: text, sessionId: state.sessionId);
     state = state.copyWith(messages: [...state.messages, msg]);
+  }
+
+    // Proactively show insights after AI response
+  void _maybeShareInsight() {
+    final insights = state.insights;
+    if (insights.isEmpty) return;
+    final msgCount = state.messages.where((m) => m.role == 'user').length;
+    // Share insight: after 3rd message, then every 10 user messages
+    final shouldShare = msgCount == 3 || (msgCount > 3 && msgCount % 10 == 0);
+    if (!shouldShare) return;
+    final insight = insights.first;
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      _appendAssistant('💡 لاحظت حاجة: ${insight.message}');
+      state = state.copyWith(insights: insights.skip(1).toList());
+    });
   }
 
   static const _welcome =

@@ -8,17 +8,23 @@ import 'package:workmanager/workmanager.dart';
 import '../database/database_helper.dart';
 import 'ai_service.dart';
 import 'memory_service.dart';
+import 'pattern_service.dart';
+import 'self_heal_service.dart';
 
 part 'background_service.g.dart';
 
 // ── Task names ────────────────────────────────────────────────
 abstract class BgTask {
-  static const morning  = 'hamada_morning';
-  static const evening  = 'hamada_evening';
-  static const overdue  = 'hamada_overdue';
-  static const debt     = 'hamada_debt';
-  static const finance  = 'hamada_finance';
-  static const memClean = 'hamada_mem_clean';
+  static const morning    = 'hamada_morning';
+  static const evening    = 'hamada_evening';
+  static const overdue    = 'hamada_overdue';
+  static const debt       = 'hamada_debt';
+  static const finance    = 'hamada_finance';
+  static const memClean   = 'hamada_mem_clean';
+  static const timeline   = 'hamada_timeline';
+  static const patterns   = 'hamada_patterns';
+  static const selfHeal   = 'hamada_self_heal';
+  static const apptPrep   = 'hamada_appt_prep';
 }
 
 // ── Notification IDs ──────────────────────────────────────────
@@ -28,6 +34,8 @@ abstract class NotifId {
   static const tasks    = 1003;
   static const finance  = 1004;
   static const debt     = 1005;
+  static const insight  = 1006;
+  static const apptPrep = 1007;
 }
 
 // ── Channels ──────────────────────────────────────────────────
@@ -136,6 +144,54 @@ void workmanagerCallback() {
         case BgTask.memClean:
           await memory.pruneOldMemories();
           break;
+
+        case BgTask.selfHeal:
+          final healer = SelfHealService(db: db);
+          final report = await healer.runHealthCheck();
+          final anomalies = await healer.detectAnomalies();
+          if (anomalies.isNotEmpty) {
+            await notif.show(
+              id:      NotifId.insight,
+              title:   'حماده لاحظ حاجة',
+              body:    anomalies.first,
+              channel: NotifChannel.daily,
+            );
+          }
+          break;
+
+        case BgTask.timeline:
+          final pSvc = PatternService(db: db, ai: ai);
+          await pSvc.buildDailyTimeline(DateTime.now());
+          break;
+
+        case BgTask.patterns:
+          final patSvc   = PatternService(db: db, ai: ai);
+          final insights = await patSvc.analyzePatterns();
+          if (insights.isNotEmpty && insights.first.confidence > 0.7) {
+            await notif.show(
+              id:      NotifId.insight,
+              title:   'حماده لاحظ pattern',
+              body:    insights.first.message,
+              channel: NotifChannel.daily,
+            );
+          }
+          break;
+
+        case BgTask.apptPrep:
+          final appts = await db.getUpcomingAppointments(withinDays: 1);
+          if (appts.isNotEmpty) {
+            final prepSvc = PatternService(db: db, ai: ai);
+            final brief   = await prepSvc.getAppointmentBrief(appts.first);
+            if (brief.isNotEmpty) {
+              await notif.show(
+                id:      NotifId.apptPrep,
+                title:   'تجهيز لموعد بكرة: ${appts.first['title']}',
+                body:    brief,
+                channel: NotifChannel.daily,
+              );
+            }
+          }
+          break;
       }
 
       await ai.dispose();
@@ -168,6 +224,11 @@ class BackgroundService {
       (BgTask.debt,     const Duration(hours: 24),  _delayUntil(10)),
       (BgTask.finance,  const Duration(days: 7),    _delayUntilFriday(19)),
       (BgTask.memClean, const Duration(days: 7),    const Duration(days: 1)),
+      // New tasks
+      (BgTask.timeline,  const Duration(hours: 24),  _delayUntil(23)),
+      (BgTask.patterns,  const Duration(days: 3),    const Duration(hours: 6)),
+      (BgTask.selfHeal,  const Duration(hours: 24),  const Duration(hours: 2)),
+      (BgTask.apptPrep,  const Duration(hours: 12),  _delayUntil(20)),
     ];
 
     for (final t in tasks) {

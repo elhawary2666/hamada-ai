@@ -67,7 +67,7 @@ class MemoryService {
     required String type,
     int importance = 5,
     String? sourceMsgId,
-    double similarityThreshold = 0.82,
+    double similarityThreshold = 0.88, // Higher = fewer false updates
   }) async {
     if (content.trim().isEmpty) return '';
 

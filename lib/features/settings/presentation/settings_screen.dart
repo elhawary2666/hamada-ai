@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/di/providers.dart';
+import '../../../core/services/self_heal_service.dart';
 import '../../relationships/presentation/relationships_screen.dart';
 import '../../chat/providers/chat_provider.dart';
 import '../../../core/router/app_router.dart';
@@ -57,6 +58,51 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
             onTap: () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const RelationshipsScreen())),
+          ),
+        ]),
+        const Gap(12),
+
+        _Section(title: '🔧 صحة التطبيق', children: [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Text('🔧', style: TextStyle(fontSize: 22)),
+            title: Text('فحص وإصلاح التطبيق', style: GoogleFonts.cairo(
+                fontSize: 14, color: AppColors.textPrimary)),
+            subtitle: Text('بيكتشف ويصلح الأخطاء تلقائياً',
+                style: GoogleFonts.cairo(fontSize: 11, color: AppColors.textSecondary)),
+            trailing: const Icon(Icons.chevron_right, color: AppColors.textHint),
+            onTap: () async {
+              showDialog(context: context, barrierDismissible: false,
+                builder: (_) => Center(child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16)),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const CircularProgressIndicator(color: AppColors.primary),
+                    const Gap(16),
+                    Text('بيفحص...', style: GoogleFonts.cairo(color: AppColors.textPrimary)),
+                  ]),
+                )));
+              final healer = ref.read(selfHealServiceProvider);
+              final report = await healer.runHealthCheck();
+              if (context.mounted) Navigator.pop(context);
+              if (context.mounted) showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  backgroundColor: AppColors.surface,
+                  title: Text(report.isHealthy ? '✅ التطبيق تمام' : '⚠️ تم الإصلاح',
+                      style: GoogleFonts.cairo(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+                  content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (report.fixes.isNotEmpty) ...report.fixes.map((f) =>
+                        Padding(padding: const EdgeInsets.only(bottom: 4),
+                            child: Text('✅ $f', style: GoogleFonts.cairo(fontSize: 13, color: AppColors.success)))),
+                    if (report.isHealthy && report.fixes.isEmpty)
+                      Text('مفيش مشاكل 👍', style: GoogleFonts.cairo(fontSize: 13, color: AppColors.textSecondary)),
+                  ]),
+                  actions: [TextButton(onPressed: () => Navigator.pop(context),
+                      child: Text('تمام', style: GoogleFonts.cairo(color: AppColors.primary)))],
+                ),
+              );
+            },
           ),
         ]),
         const Gap(12),
@@ -133,7 +179,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ]),
         const Gap(12),
 
-        _Section(title: '🔑 Groq API Key', children: [
+        _Section(title: '🔑 Gemini API Key', children: [
           Text('محفوظ على جهازك فقط — مش بيتبعت لأي مكان',
             style: GoogleFonts.cairo(
                 fontSize: 11.5, color: AppColors.success)),
@@ -146,7 +192,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 fontFamily: 'monospace',
                 fontSize: 12, color: AppColors.textPrimary),
             decoration: InputDecoration(
-              hintText: 'gsk_... (فاضي = ما تغيرش)',
+              hintText: 'AIzaSy... (فاضي = ما تغيرش)',
               hintStyle: GoogleFonts.cairo(
                   color: AppColors.textHint, fontSize: 11),
               suffixIcon: IconButton(
@@ -310,8 +356,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
         _Section(title: '🔒 الخصوصية', children: [
           _InfoTile(label: 'ذاكرة + ملاحظات + فلوس', value: '📱 على جهازك'),
-          _InfoTile(label: 'Groq بيشوف',              value: 'رسالتك + context'),
-          _InfoTile(label: 'Groq بيحفظ',              value: 'لا (بحسب سياستهم)'),
+          _InfoTile(label: 'Gemini بيشوف', value: 'رسالتك + context'),
+          _InfoTile(label: 'Gemini بيحفظ', value: 'لا (بحسب سياسة Google)'),
         ]),
         const Gap(12),
 
@@ -349,11 +395,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
         _Section(title: 'ℹ️ عن حماده AI', children: [
           _InfoTile(label: 'الإصدار', value: '2.1.0'),
-          _InfoTile(label: 'الموديل', value: 'Llama 3.3 70B via Groq'),
+          _InfoTile(label: 'الموديل', value: 'Gemini 2.0 Flash'),
           _InfoTile(label: 'الميزات', value: 'Voice • Backup • Goals • Recurring'),
           const Gap(8),
           Text(
-            '"ذاكرتك وبياناتك على جهازك — حماده بس بيفكر على Groq" 🔒',
+            '"ذاكرتك وبياناتك على جهازك — حماده بس بيفكر على Gemini" 🔒',
             textAlign: TextAlign.center,
             style: GoogleFonts.cairo(
                 fontSize: 11.5, color: AppColors.success, height: 1.5)),
@@ -366,8 +412,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _saveKey() async {
     final key = _keyCtrl.text.trim();
     if (key.isEmpty) return;
-    if (!key.startsWith('gsk_') || key.length < 20) {
-      setState(() => _keyMsg = '❌ الـ key لازم يبدأ بـ gsk_');
+    if (key.length < 20) {
+      setState(() => _keyMsg = '❌ الـ key قصير جداً');
       return;
     }
     setState(() { _saving = true; _keyMsg = null; });

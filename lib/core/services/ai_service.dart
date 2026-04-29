@@ -14,17 +14,20 @@ import 'memory_service.dart';
 
 part 'ai_service.g.dart';
 
+// ─── User mood enum ───────────────────────────────────────
+enum UserMood { neutral, stressed, happy, sad, tired }
+
 final aiReadyNotifier = ValueNotifier<bool>(false);
 
-const _groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
-const _model   = 'llama-3.3-70b-versatile';
-const _kApiKey = 'groq_api_key';
+// ─── Gemini 2.0 Flash ─────────────────────────────────────────
+const _geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const _kApiKey   = 'gemini_api_key';
 
 class _RateLimiter {
-  static const _minGapMs     = 500;
-  static const _maxPerMinute = 25;
+  static const _minGapMs     = 300;
+  static const _maxPerMinute = 55; // Gemini free: 60/min
   final _timestamps = <int>[];
-  int _lastMs = 0;
+  int   _lastMs     = 0;
 
   bool canSend() {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -41,9 +44,8 @@ class _RateLimiter {
   }
 
   int get remainingThisMinute {
-    final now    = DateTime.now().millisecondsSinceEpoch;
-    final cutoff = now - 60000;
-    _timestamps.removeWhere((t) => t < cutoff);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _timestamps.removeWhere((t) => t < now - 60000);
     return _maxPerMinute - _timestamps.length;
   }
 }
@@ -55,40 +57,29 @@ class AiInitStatus {
   final double      progress;
   final String      message;
   final String?     errorMsg;
-  const AiInitStatus({
-    required this.state,
-    this.progress = 1.0,
-    this.message  = '',
-    this.errorMsg,
-  });
+  const AiInitStatus({required this.state, this.progress = 1.0,
+      this.message = '', this.errorMsg});
 }
 
 class HamadaResponse {
   final String text;
   final double tokensPerSec;
   final int    totalTokens;
-  const HamadaResponse({
-    required this.text,
-    required this.tokensPerSec,
-    required this.totalTokens,
-  });
+  const HamadaResponse({required this.text,
+      required this.tokensPerSec, required this.totalTokens});
 }
 
 @riverpod
-AiService aiService(AiServiceRef ref) {
-  final svc = AiService(
-    db:            ref.watch(databaseHelperProvider),
-    memoryService: ref.watch(memoryServiceProvider),
-  );
-  return svc;
-}
+AiService aiService(AiServiceRef ref) => AiService(
+  db:            ref.watch(databaseHelperProvider),
+  memoryService: ref.watch(memoryServiceProvider),
+);
 
 @riverpod
 Stream<AiInitStatus> aiInitStatus(AiInitStatusRef ref) =>
     Stream.value(const AiInitStatus(
-      state:    AiInitState.ready,
-      progress: 1.0,
-      message:  'حماده جاهز يخدمك 🔒',
+      state: AiInitState.ready, progress: 1.0,
+      message: 'حماده جاهز يخدمك 🔒',
     ));
 
 class AiService {
@@ -104,9 +95,11 @@ class AiService {
   String _apiKey = '';
 
   bool   get isReady           => _ready;
-  String get activeModelName   => 'Llama 3.3 70B';
-  String get activeBackendName => 'Groq (مجاني)';
+  String get activeModelName   => 'Gemini 2.0 Flash';
+  String get activeBackendName => 'Google AI (مجاني)';
   int    get remainingRequests => _rl.remainingThisMinute;
+
+  // ─── INIT ─────────────────────────────────────────────────
 
   Future<void> initialize() async {
     try {
@@ -114,53 +107,41 @@ class AiService {
       await sqlDb.execute(
         'CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)'
       );
-      final rows = await sqlDb.query(
-        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
-      );
+      final rows = await sqlDb.query('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
       if (rows.isNotEmpty) {
         final k = (rows.first['value'] as String?)?.trim() ?? '';
         if (k.isNotEmpty) {
           _apiKey = k;
           _ready  = true;
           aiReadyNotifier.value = true;
-          _log.i('API key loaded: ${k.length}chars');
+          _log.i('Gemini key loaded: ${k.length} chars');
         }
       }
-    } catch (e) {
-      _log.w('Init error: $e');
-    }
+    } catch (e) { _log.w('Init error: $e'); }
   }
 
   Future<bool> hasApiKey() async {
     try {
       final sqlDb = await db.database;
-      final rows  = await sqlDb.query(
-        'app_settings', where: 'key = ?', whereArgs: [_kApiKey]
-      );
+      final rows  = await sqlDb.query('app_settings',
+          where: 'key = ?', whereArgs: [_kApiKey]);
       return rows.isNotEmpty &&
-             ((rows.first['value'] as String?)?.trim().isNotEmpty ?? false);
+          ((rows.first['value'] as String?)?.trim().isNotEmpty ?? false);
     } catch (_) { return false; }
   }
 
-
   Future<bool> setApiKey(String key) async {
-    if (key.isEmpty || !key.startsWith('gsk_') || key.length < 20) return false;
+    if (key.isEmpty || key.length < 20) return false;
     try {
       final sqlDb = await db.database;
-      await sqlDb.insert(
-        'app_settings',
-        {'key': _kApiKey, 'value': key},
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await sqlDb.insert('app_settings', {'key': _kApiKey, 'value': key},
+          conflictAlgorithm: ConflictAlgorithm.replace);
       _apiKey = key;
       _ready  = true;
       aiReadyNotifier.value = true;
-      _log.i('API key saved');
       return true;
-    } catch (e) {
-      _log.w('setApiKey error: $e');
-      return false;
-    }
+    } catch (_) { return false; }
   }
 
   Future<void> clearApiKey() async {
@@ -173,6 +154,36 @@ class AiService {
     aiReadyNotifier.value = false;
   }
 
+  // ─── PERSONALITY LEVEL ────────────────────────────────────
+  // Based on total message count — personality evolves naturally
+
+  Future<int> getPersonalityLevel() async {
+    try {
+      final count = await db.getTotalMessageCount();
+      if (count < 50)   return 1; // رسمي نوعاً
+      if (count < 150)  return 2; // عامية أكتر
+      if (count < 400)  return 3; // صاحب قديم
+      return 4;                   // يكمل جملك ويعرف أسلوبك
+    } catch (_) { return 1; }
+  }
+
+  // ─── MOOD DETECTION ───────────────────────────────────────
+
+  UserMood detectMood(String text) {
+    final t = text.toLowerCase();
+    final stressed = ['تعبت','ضغط','زهقت','مش قادر','صعب','مشكلة','خايف','قلقان','ضيقان'];
+    final happy    = ['مبسوط','سعيد','تمام','عظيم','حلو','روعة','ممتاز','كويس'];
+    final sad      = ['حزين','زعلان','مش كويس','وحيد','وحشني','فاتني'];
+    final tired    = ['تعبان','نايم','عيان','مريض','خلصت','مرهق'];
+    if (stressed.any((k) => t.contains(k))) return UserMood.stressed;
+    if (sad.any((k)      => t.contains(k))) return UserMood.sad;
+    if (tired.any((k)    => t.contains(k))) return UserMood.tired;
+    if (happy.any((k)    => t.contains(k))) return UserMood.happy;
+    return UserMood.neutral;
+  }
+
+  // ─── MAIN CHAT ────────────────────────────────────────────
+
   Future<HamadaResponse> chat({
     required String userMessage,
     required String sessionId,
@@ -181,299 +192,367 @@ class AiService {
   }) async {
     if (_apiKey.isEmpty || !_ready) await initialize();
     if (_apiKey.isEmpty || !_ready) {
-      throw Exception('API key مش متضبط — روح الإعدادات وضيف الـ Key 🔑');
+      throw Exception('محتاج Gemini API key — روح الإعدادات 🔑');
     }
     _checkRateLimit();
 
-    // ✅ Layer 1C: improved memory retrieval via Groq re-ranking
-    final memories = await _retrieveMemoriesWithGroq(userMessage);
-    final notes    = await _getRecentNotes();
-    final today    = await _getTodayContext();
-
-    // ✅ Feature 8: Emergency mode check
+    final memories   = await _retrieveMemories(userMessage);
+    final notes      = await _getRecentNotes();
+    final today      = await _getTodayContext();
     final isEmergency = await _isEmergencyMode();
+    final level      = await getPersonalityLevel();
+    final mood       = detectMood(userMessage);
 
     final systemPrompt = PromptConstants.buildPromptWithMemory(
       systemPrompt:     isEmergency
           ? PromptConstants.HAMADA_EMERGENCY_PROMPT
-          : PromptConstants.HAMADA_SYSTEM_PROMPT,
+          : PromptConstants.buildPersonalityPrompt(level),
       relevantMemories: memories.map((m) => m['content'] as String).toList(),
       recentNotes:      notes,
       todayContext:     today,
       userMessage:      userMessage,
+      mood:             mood,
     );
 
-    final recent = history.length > 12
-        ? history.sublist(history.length - 12)
-        : history;
-
-    final messages = [
-      {'role': 'system',    'content': systemPrompt},
-      ...recent.map((m) => {'role': m['role'], 'content': m['content']}),
-      {'role': 'user',      'content': userMessage},
-    ];
+    // Build Gemini-format contents array
+    final contents = <Map<String,dynamic>>[];
+    for (final h in history.take(16)) {
+      contents.add({
+        'role':  h['role'] == 'user' ? 'user' : 'model',
+        'parts': [{'text': h['content'] as String}],
+      });
+    }
+    contents.add({'role': 'user', 'parts': [{'text': userMessage}]});
 
     final sw = Stopwatch()..start();
     try {
       _rl.record();
       final httpResponse = await http.post(
-        Uri.parse(_groqUrl),
-        headers: {
-          'Authorization': 'Bearer $_apiKey',
-          'Content-Type':  'application/json',
-        },
+        Uri.parse('$_geminiUrl?key=$_apiKey'),
+        headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'model':       _model,
-          'messages':    messages,
-          'stream':      false,
-          'max_tokens':  1024,
-          'temperature': isEmergency ? 0.4 : 0.7,
-          'top_p':       0.9,
+          'system_instruction': {'parts': [{'text': systemPrompt}]},
+          'contents': contents,
+          'generationConfig': {
+            'maxOutputTokens':  1200,
+            'temperature':      isEmergency ? 0.4 : _tempForMood(mood),
+            'topP':             0.9,
+            'responseMimeType': 'application/json',
+          },
         }),
       ).timeout(const Duration(seconds: 30));
 
-      if (httpResponse.statusCode == 401) {
-        throw Exception('API key غلط — روح الإعدادات وعدّله 🔑');
-      }
-      if (httpResponse.statusCode == 429) {
-        throw Exception('وصلت للحد اليومي المجاني — جرّب بكرة 🌙');
-      }
-      if (httpResponse.statusCode != 200) {
-        throw Exception('خطأ (${httpResponse.statusCode}) — جرّب تاني');
-      }
+      _handleHttpError(httpResponse.statusCode);
 
-      final data = jsonDecode(utf8.decode(httpResponse.bodyBytes));
-      final text = (data['choices']?[0]?['message']?['content'] as String? ?? '').trim();
-      final tok  = (data['usage']?['total_tokens'] as int?) ?? 0;
+      final data  = jsonDecode(utf8.decode(httpResponse.bodyBytes));
+      final raw   = (data['candidates']?[0]?['content']?['parts']?[0]?['text']
+          as String? ?? '').trim();
+      final usage = data['usageMetadata'];
+      final tok   = ((usage?['totalTokenCount'] as int?) ?? 0);
 
-      if (text.isNotEmpty) onToken?.call(text);
-
+      if (raw.isNotEmpty) onToken?.call(raw);
       sw.stop();
-      final tps = sw.elapsedMilliseconds > 0
-          ? tok / (sw.elapsedMilliseconds / 1000)
-          : 0.0;
+      final tps = sw.elapsedMilliseconds > 0 ? tok / (sw.elapsedMilliseconds / 1000) : 0.0;
 
-      _extractMemoriesAsync(userMessage, text, sessionId: sessionId);
-      return HamadaResponse(text: text, tokensPerSec: tps, totalTokens: tok);
+      _saveMemoriesFromResponse(raw, sessionId: sessionId);
+      return HamadaResponse(text: raw, tokensPerSec: tps, totalTokens: tok);
 
     } on Exception catch (e) {
-      _log.e('HTTP error', error: e);
       final msg = e.toString();
       if (msg.contains('TimeoutException') || msg.contains('timed out')) {
-        throw Exception('انقطع النت أو الاتصال بطيء — جرّب تاني 📶');
+        throw Exception('الاتصال بطيء — جرّب تاني 📶');
       }
-      if (msg.contains('🔑') || msg.contains('🌙') || msg.contains('خطأ (')) rethrow;
-      throw Exception('مشكلة في الاتصال — تأكد من النت وجرّب تاني 📶');
+      if (msg.contains('🔑') || msg.contains('حد يومي') || msg.contains('خطأ (')) rethrow;
+      throw Exception('مشكلة في الاتصال — تأكد من النت 📶');
     }
   }
 
-  // ✅ Layer 1C: Memory re-ranking via Groq
-  Future<List<Map<String, dynamic>>> _retrieveMemoriesWithGroq(String query) async {
-    final ftsResults = await memoryService.retrieveRelevantMemories(query, topK: 15);
-    if (ftsResults.isEmpty) return [];
-    // ✅ FIX: always keep ftsResults as fallback — never return empty if FTS had results
-    if (ftsResults.length <= 5 || !_ready) return ftsResults.take(5).toList();
+  double _tempForMood(UserMood mood) {
+    switch (mood) {
+      case UserMood.stressed: return 0.5; // أكتر تركيز لما المستخدم في ضغط
+      case UserMood.sad:      return 0.5;
+      case UserMood.happy:    return 0.9; // أكتر إبداع لما مبسوط
+      default:                return 0.7;
+    }
+  }
 
+  void _handleHttpError(int code) {
+    switch (code) {
+      case 400: throw Exception('طلب غلط — تأكد من الـ key وجرّب تاني');
+      case 403: throw Exception('API key غلط أو انتهت صلاحيته — روح الإعدادات 🔑');
+      case 429: throw Exception('وصلت للحد اليومي المجاني — جرّب بكرة 🌙');
+      case 200: return;
+      default:  throw Exception('خطأ ($code) — جرّب تاني');
+    }
+  }
+
+  // ─── MEMORIES ─────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> _retrieveMemories(String query) =>
+      memoryService.retrieveRelevantMemories(query, topK: 5);
+
+  void _saveMemoriesFromResponse(String raw, {required String sessionId}) {
+    Future.microtask(() async {
+      try {
+        final parsed   = parseUnifiedResponse(raw);
+        final memories = parsed['memories'];
+        if (memories is! List || memories.isEmpty) return;
+        for (final m in memories) {
+          if (m is! Map<String, dynamic>) continue;
+          final content = (m['content'] as String?)?.trim() ?? '';
+          if (content.isEmpty) continue;
+          await memoryService.updateOrSaveMemory(
+            content:     content,
+            type:        (m['type'] as String?)?.trim() ?? 'note',
+            importance:  (m['importance'] as num?)?.toInt() ?? 5,
+            sourceMsgId: sessionId,
+          );
+        }
+      } catch (_) {}
+    });
+  }
+
+  static Map<String, dynamic> parseUnifiedResponse(String raw) {
     try {
-      final memorySummary = ftsResults.asMap().entries
-          .map((e) => '${e.key}: ${e.value['content']}')
-          .join('\n');
-      final prompt =
-          'من الذكريات دي، اختار أرقام أكتر 5 ذكريات لها علاقة بالسؤال ده: "$query"\n'
-          'الذكريات:\n$memorySummary\n'
-          'ارجع الأرقام بس مفصولة بفاصلة مثال: 0,2,4,7,11';
-
-      final result = await _singleShot(prompt, maxTokens: 30, temperature: 0.1);
-      final indices = result
-          .replaceAll(RegExp(r'[^\d,]'), '')
-          .split(',')
-          .map((s) => int.tryParse(s.trim()))
-          .where((i) => i != null && i < ftsResults.length)
-          .map((i) => i!)
-          .toList();
-
-      // ✅ FIX: if Groq returned nothing useful, fall back to FTS top-5
-      if (indices.isEmpty) return ftsResults.take(5).toList();
-      return indices.map((i) => ftsResults[i]).toList();
-    } catch (_) {
-      // ✅ FIX: on any error, return FTS results (never empty)
-      return ftsResults.take(5).toList();
-    }
+      final clean = raw.replaceAll('```json', '').replaceAll('```', '').trim();
+      final s = clean.indexOf('{');
+      final e = clean.lastIndexOf('}');
+      if (s == -1 || e <= s) return {'reply': raw};
+      final decoded = jsonDecode(clean.substring(s, e + 1));
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {}
+    return {'reply': raw};
   }
 
-  // ✅ Feature 8: Emergency mode
+  // ─── EMERGENCY MODE ───────────────────────────────────────
+
   Future<bool> _isEmergencyMode() async {
     try {
-      final now     = DateTime.now();
-      final summary = await db.getMonthSummary(now.year, now.month);
-      final balance = (summary['income'] ?? 0) - (summary['expense'] ?? 0);
-      // threshold = 500 EGP default
-      return balance < 500;
+      final sqlDb   = await db.database;
+      final allRows = await sqlDb.rawQuery(
+        "SELECT type, COALESCE(SUM(amount),0) as t FROM finance_transactions GROUP BY type"
+      );
+      double income = 0, expense = 0;
+      for (final r in allRows) {
+        final t = (r['t'] as num?)?.toDouble() ?? 0;
+        if (r['type'] == 'income')  income  = t;
+        if (r['type'] == 'expense') expense = t;
+      }
+      return income > 0 && (income - expense) < 500;
     } catch (_) { return false; }
   }
 
-  Future<String> analyzeFinances({required int year, required int month}) async {
-    if (!_ready) return 'مفيش API key — روح الإعدادات وضيف الـ Key عشان أحلل ماليتك 🔑';
+  // ─── CONTEXT ──────────────────────────────────────────────
+
+  Future<String> _getTodayContext() async {
     try {
-      final summary = await db.getMonthSummary(year, month);
-      final cats    = await db.getCategoryTotals(year, month);
-      final goals   = await db.getFinancialGoals(activeOnly: false);
-      final debt    = await db.getDebtSummary();
+      final now   = DateTime.now();
+      final parts = <String>[];
 
-      final income  = summary['income']  ?? 0.0;
-      final expense = summary['expense'] ?? 0.0;
-      final net     = income - expense;
-
-      // ✅ Feature 2: Budget warnings in analysis
-      final budgets     = await db.getBudgets(year, month);
-      final budgetLines = <String>[];
-      for (final b in budgets) {
-        final spent = cats[b['category']] ?? 0.0;
-        final limit = b['limit_amount'] as double;
-        final pct   = limit > 0 ? (spent / limit * 100) : 0.0;
-        if (pct >= 80) {
-          budgetLines.add(
-              '⚠️ ميزانية ${b['category']}: ${pct.toStringAsFixed(0)}% '
-              '(${spent.toStringAsFixed(0)} من ${limit.toStringAsFixed(0)} ج.م)');
+      // Cumulative + monthly balance
+      try {
+        final sqlDb   = await db.database;
+        final allRows = await sqlDb.rawQuery(
+          "SELECT type, COALESCE(SUM(amount),0) as t FROM finance_transactions GROUP BY type"
+        );
+        double totalIn = 0, totalOut = 0;
+        for (final r in allRows) {
+          final t = (r['t'] as num?)?.toDouble() ?? 0;
+          if (r['type'] == 'income')  totalIn  = t;
+          if (r['type'] == 'expense') totalOut = t;
         }
-      }
+        final cumBal = totalIn - totalOut;
+        parts.add('الرصيد الإجمالي: ${cumBal >= 0 ? '+' : ''}${cumBal.toStringAsFixed(0)} ج.م');
 
-      final catLines = cats.entries
-          .take(8)
-          .map((e) {
-            final pct = income > 0 ? (e.value / income * 100).toStringAsFixed(1) : '0';
-            return '• ${e.key}: ${e.value.toStringAsFixed(0)} ج.م ($pct% من الدخل)';
-          })
-          .join('\n');
+        final monthly = await db.getMonthSummary(now.year, now.month);
+        final mIn     = monthly['income']  ?? 0.0;
+        final mOut    = monthly['expense'] ?? 0.0;
+        parts.add('رصيد ${now.month}/${now.year}: ${(mIn-mOut).toStringAsFixed(0)} ج.م (دخل: ${mIn.toStringAsFixed(0)} | مصروف: ${mOut.toStringAsFixed(0)})');
+      } catch (_) {}
 
-      final goalsLines = goals.isEmpty
-          ? 'لا توجد أهداف مالية'
-          : goals.map((g) {
-              final pct = (g['target_amount'] as num) > 0
-                  ? ((g['current_amount'] as num) / (g['target_amount'] as num) * 100).toStringAsFixed(0)
-                  : '0';
-              return '• ${g['title']}: ${g['current_amount']} / ${g['target_amount']} ج.م ($pct%)';
-            }).join('\n');
+      // Budget warnings
+      try {
+        final budgets   = await db.getBudgets(now.year, now.month);
+        final catTotals = await db.getCategoryTotals(now.year, now.month);
+        for (final b in budgets) {
+          final spent = catTotals[b['category']] ?? 0.0;
+          final limit = (b['limit_amount'] as num).toDouble();
+          if (limit > 0 && (spent / limit) >= 0.8) {
+            parts.add('⚠️ ميزانية ${b['category']}: ${(spent/limit*100).toStringAsFixed(0)}%');
+          }
+        }
+      } catch (_) {}
 
-      final financeData =
-          'الدخل: ${income.toStringAsFixed(0)} ج.م\n'
-          'المصروف: ${expense.toStringAsFixed(0)} ج.م\n'
-          'الصافي: ${net.toStringAsFixed(0)} ج.م\n'
-          '${debt != null ? 'ديون: ${debt['owe']} ج.م مستحق عليك | ${debt['owed']} ج.م مستحق لك\n' : ''}'
-          '${budgetLines.isEmpty ? '' : '\nتحذيرات الميزانية:\n${budgetLines.join('\n')}\n'}'
-          '\nتوزيع المصروفات:\n$catLines';
+      // Overdue tasks
+      try {
+        final overdue = await db.getOverdueTasks();
+        if (overdue.isNotEmpty) {
+          parts.add('مهام متأخرة (${overdue.length}): ${overdue.take(2).map((t) => t['title']).join(' · ')}');
+        }
+      } catch (_) {}
 
-      final prompt = PromptConstants.FINANCE_ANALYSIS_PROMPT
-          .replaceAll('{finance_data}', financeData)
-          .replaceAll('{goals_data}',   goalsLines);
+      // Today tasks
+      try {
+        final tasks = await db.getTodayTasks();
+        if (tasks.isNotEmpty) {
+          parts.add('مهام اليوم: ${tasks.take(3).map((t) => t['title']).join(' · ')}');
+        }
+      } catch (_) {}
 
-      return await _singleShot(prompt, maxTokens: 600, temperature: 0.6);
-    } catch (e) {
-      return 'حصل خطأ في التحليل: $e';
-    }
-  }
+      // Upcoming appointments
+      try {
+        final appts = await db.getUpcomingAppointments(withinDays: 2);
+        if (appts.isNotEmpty) {
+          parts.add('مواعيد قريبة: ${appts.take(2).map((a) => a['title']).join(' · ')}');
+        }
+      } catch (_) {}
 
-  // ✅ IMPROVEMENT 1: Summarize old conversation messages for context compression
-  Future<String> summarizeConversation(List<Map<String, dynamic>> messages) async {
-    if (!_ready || messages.isEmpty) return '';
-    try {
-      final convo = messages
-          .map((m) => '${m['role'] == 'user' ? 'المستخدم' : 'حماده'}: ${m['content']}')
-          .join('\n');
-      final prompt =
-          'لخّص المحادثة دي في نقاط مهمة (بالعربي المصري، أقل من 10 سطور):\n\n$convo\n\n'
-          'اذكر: المعلومات الشخصية، القرارات المهمة، المواضيع اللي اتناقشت. مفيش تحيات أو مقدمات.';
-      return await _singleShot(prompt, maxTokens: 300, temperature: 0.3);
+      // Birthdays
+      try {
+        final bdays = await db.getUpcomingBirthdays(withinDays: 3);
+        if (bdays.isNotEmpty) {
+          final names = bdays.map((r) => r['days_until'] == 0
+              ? '${r['name']} 🎂 اليوم!'
+              : '${r['name']} (${r['days_until']} يوم)').join(', ');
+          parts.add('أعياد ميلاد: $names');
+        }
+      } catch (_) {}
+
+      return parts.isEmpty ? '' : parts.join('\n');
     } catch (_) { return ''; }
   }
 
-  // ✅ Feature 3: Improved weekly report
+  // ─── SINGLE SHOT (for reports etc.) ──────────────────────
+
+  Future<String> singleShot(String prompt, {int maxTokens = 200, double temperature = 0.7}) =>
+      _singleShot(prompt, maxTokens: maxTokens, temperature: temperature);
+
+  Future<String> _singleShot(String prompt, {int maxTokens = 200, double temperature = 0.4}) async {
+    if (!_ready) return '';
+    if (!_rl.canSend()) { await Future.delayed(const Duration(milliseconds: 400)); }
+    _rl.record();
+    try {
+      final httpResponse = await http.post(
+        Uri.parse('$_geminiUrl?key=$_apiKey'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+          'generationConfig': {
+            'maxOutputTokens': maxTokens,
+            'temperature':     temperature,
+          },
+        }),
+      ).timeout(const Duration(seconds: 20));
+      if (httpResponse.statusCode != 200) return '';
+      final data = jsonDecode(utf8.decode(httpResponse.bodyBytes));
+      final raw  = (data['candidates']?[0]?['content']?['parts']?[0]?['text']
+          as String?)?.trim() ?? '';
+      final parsed = parseUnifiedResponse(raw);
+      final reply  = parsed['reply'] as String?;
+      return (reply != null && reply.isNotEmpty) ? reply : raw;
+    } catch (_) { return ''; }
+  }
+
+  // ─── ANALYSIS METHODS ─────────────────────────────────────
+
+  Future<String> analyzeFinances({required int year, required int month}) async {
+    if (!_ready) return 'محتاج API key';
+    try {
+      final summary = await db.getMonthSummary(year, month);
+      final cats    = await db.getCategoryTotals(year, month);
+      final goals   = await db.getFinancialGoals();
+      final budgets = await db.getBudgets(year, month);
+      final income  = summary['income']  ?? 0.0;
+      final expense = summary['expense'] ?? 0.0;
+
+      final budgetWarnings = <String>[];
+      for (final b in budgets) {
+        final spent = cats[b['category']] ?? 0.0;
+        final limit = (b['limit_amount'] as num).toDouble();
+        final pct   = limit > 0 ? (spent / limit * 100) : 0.0;
+        if (pct >= 80) budgetWarnings.add('⚠️ ${b['category']}: ${pct.toStringAsFixed(0)}%');
+      }
+
+      final financeData =
+          'دخل: ${income.toStringAsFixed(0)} ج.م\n'
+          'مصروف: ${expense.toStringAsFixed(0)} ج.م\n'
+          'صافي: ${(income - expense).toStringAsFixed(0)} ج.م\n'
+          '${budgetWarnings.isEmpty ? '' : 'تحذيرات: ${budgetWarnings.join(' | ')}\n'}'
+          'أعلى فئات: ${cats.entries.take(5).map((e) => '${e.key}: ${e.value.toStringAsFixed(0)}').join(' | ')}';
+
+      final goalsStr = goals.isEmpty ? 'لا توجد أهداف' :
+          goals.take(3).map((g) => '${g['title']}: ${g['current_amount']}/${g['target_amount']}').join(' | ');
+
+      final prompt = PromptConstants.FINANCE_ANALYSIS_PROMPT
+          .replaceAll('{finance_data}', financeData)
+          .replaceAll('{goals_data}',   goalsStr);
+
+      return await _singleShot(prompt, maxTokens: 600, temperature: 0.6);
+    } catch (e) { return 'خطأ في التحليل: $e'; }
+  }
+
   Future<String> generateWeeklyReport() async {
-    if (!_ready) return 'مفيش API key';
+    if (!_ready) return '';
     try {
       final now       = DateTime.now();
       final weekStart = now.subtract(const Duration(days: 7));
       final txs       = await db.getTransactionsByDateRange(
           weekStart.millisecondsSinceEpoch, now.millisecondsSinceEpoch);
-
       double income = 0, expense = 0;
-      final catMap = <String, double>{};
+      final cats = <String, double>{};
       for (final t in txs) {
         final amount = (t['amount'] as num).toDouble();
-        if (t['type'] == 'income') {
-          income += amount;
-        } else {
-          expense += amount;
-          final cat = t['category'] as String;
-          catMap[cat] = (catMap[cat] ?? 0) + amount;
-        }
+        if (t['type'] == 'income') { income += amount; }
+        else { expense += amount; cats[t['category'] as String] = (cats[t['category'] as String] ?? 0) + amount; }
       }
-
-      final topCats = catMap.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final topCatStr = topCats.take(3)
-          .map((e) => '${e.key}: ${e.value.toStringAsFixed(0)} ج.م')
-          .join(' | ');
-
-      final weekData =
-          'دخل الأسبوع: ${income.toStringAsFixed(0)} ج.م\n'
-          'مصروف الأسبوع: ${expense.toStringAsFixed(0)} ج.م\n'
-          'صافي: ${(income - expense).toStringAsFixed(0)} ج.م\n'
-          'أكبر مصروفات: $topCatStr\n'
-          'عدد المعاملات: ${txs.length}';
-
-      final prompt =
-          'أنت حماده. اكتب تقرير أسبوعي مالي ممتع بالعربي المصري.\n'
-          'البيانات: $weekData\n'
-          'اللهجة: دافية، واضحة، فيها نصيحة واحدة عملية.\n'
-          'الطول: 4-5 جمل بحد أقصى.';
-
+      final topCats = (cats.entries.toList()..sort((a,b) => b.value.compareTo(a.value)))
+          .take(3).map((e) => '${e.key}: ${e.value.toStringAsFixed(0)}').join(' | ');
+      final prompt = 'أنت حماده. اكتب تقرير أسبوعي مالي بالعربي المصري (4-5 جمل).\n'
+          'دخل: ${income.toStringAsFixed(0)} | مصروف: ${expense.toStringAsFixed(0)} | أعلى مصروفات: $topCats\n'
+          'رد بـ JSON: {"reply":"..."}';
       return await _singleShot(prompt, maxTokens: 250, temperature: 0.7);
-    } catch (e) {
-      return 'مش قادر أعمل تقرير دلوقتي: $e';
-    }
+    } catch (_) { return ''; }
   }
 
-  // ✅ Feature 5: Financial prediction
   Future<String> predictNextMonthFinance() async {
     if (!_ready) return '';
     try {
-      final now = DateTime.now();
-      final last3 = <Map<String, double>>[];
+      final now    = DateTime.now();
+      final months = <Map<String,double>>[];
       for (int i = 1; i <= 3; i++) {
         final d = DateTime(now.year, now.month - i + 1);
-        last3.add(await db.getMonthSummary(d.year, d.month));
+        months.add(await db.getMonthSummary(d.year, d.month));
       }
-
-      final expenses = last3.map((m) => m['expense'] ?? 0.0).toList();
-      final avg      = expenses.reduce((a, b) => a + b) / 3;
-      final trend    = (expenses[0] - expenses[2]) / 2;
+      final expenses  = months.map((m) => m['expense'] ?? 0.0).toList();
+      final avg       = expenses.reduce((a,b) => a+b) / 3;
+      final trend     = (expenses[0] - expenses[2]) / 2;
       final predicted = (avg + trend).clamp(0.0, double.infinity);
-
-      final histStr = last3.asMap().entries
-          .map((e) => 'شهر -${e.key + 1}: مصروف ${(e.value['expense'] ?? 0).toStringAsFixed(0)} ج.م')
-          .join(', ');
-
-      final prompt =
-          'أنت حماده. بناءً على مصروفات الـ3 شهور الأخيرة: $histStr، '
-          'التنبؤ للشهر الجاي: ${predicted.toStringAsFixed(0)} جنيه. '
-          'علّق في جملتين بالعربي المصري.';
-
+      final hist      = months.asMap().entries.map((e) =>
+          'شهر -${e.key+1}: ${(e.value['expense']??0).toStringAsFixed(0)} ج.م').join(', ');
+      final prompt = 'أنت حماده. بناءً على: $hist، التنبؤ: ${predicted.toStringAsFixed(0)} ج.م. علّق في جملتين.\n'
+          'رد بـ JSON: {"reply":"..."}';
       return await _singleShot(prompt, maxTokens: 120, temperature: 0.7);
     } catch (_) { return ''; }
   }
 
-  Future<String> getGoalComment({
-    required String goalName,
-    required double target,
-    required double current,
-    required int?   deadlineMs,
-  }) async {
+  Future<String> summarizeConversation(List<Map<String,dynamic>> messages) async {
+    if (!_ready || messages.isEmpty) return '';
+    try {
+      final convo = messages.take(20)
+          .map((m) => '${m['role'] == 'user' ? 'المستخدم' : 'حماده'}: ${m['content']}')
+          .join('\n');
+      final prompt = 'لخّص المحادثة دي في نقاط مهمة (بالعربي المصري، أقل من 10 سطور):\n$convo\n'
+          'اذكر: المعلومات الشخصية، القرارات، المواضيع. رد بـ JSON: {"reply":"..."}';
+      return await _singleShot(prompt, maxTokens: 300, temperature: 0.3);
+    } catch (_) { return ''; }
+  }
+
+  Future<String> getGoalComment({required String goalName, required double target,
+      required double current, required int? deadlineMs}) async {
     if (!_ready) return '';
     try {
       final daysLeft = deadlineMs != null
-          ? DateTime.fromMillisecondsSinceEpoch(deadlineMs)
-              .difference(DateTime.now()).inDays
+          ? DateTime.fromMillisecondsSinceEpoch(deadlineMs).difference(DateTime.now()).inDays
           : -1;
       final pct    = target > 0 ? (current / target * 100).toStringAsFixed(0) : '0';
       final prompt = PromptConstants.GOAL_PROGRESS_PROMPT
@@ -490,36 +569,21 @@ class AiService {
     if (!_ready) return 'حماده في انتظارك';
     try {
       final hour   = DateTime.now().hour;
-      final timeAr = hour < 12 ? 'الصبح' : (hour < 17 ? 'الضهر' : 'المسا');
+      final time   = hour < 12 ? 'الصبح' : (hour < 17 ? 'الضهر' : 'المسا');
       final task   = await db.getTopTodayTask();
       final sum    = await db.getMonthSummary(DateTime.now().year, DateTime.now().month);
       final bal    = ((sum['income'] ?? 0) - (sum['expense'] ?? 0)).toStringAsFixed(0);
       final prompt = PromptConstants.WIDGET_MESSAGE_PROMPT
-          .replaceAll('{time_of_day}', timeAr)
+          .replaceAll('{time_of_day}', time)
           .replaceAll('{top_task}',    task?['title'] as String? ?? 'لا مهام')
           .replaceAll('{balance}',     bal);
       return await _singleShot(prompt, maxTokens: 30, temperature: 0.9);
     } catch (_) { return 'يلا نعمل يوم تمام!'; }
   }
 
-  Future<String> classifyFinanceTransaction({
-    required String description,
-    required double amount,
-  }) async {
-    if (!_ready) return 'غير ذلك';
-    try {
-      final prompt = PromptConstants.FINANCE_CATEGORY_PROMPT
-          .replaceAll('{description}', description)
-          .replaceAll('{amount}',      amount.toStringAsFixed(2));
-      return await _singleShot(prompt, maxTokens: 10, temperature: 0.1);
-    } catch (_) { return 'غير ذلك'; }
-  }
-
-  Future<String> generateMorningGreeting({
-    required List<String> todayTasks,
-    required List<String> todayAppointments,
-  }) async {
-    if (!_ready) return '🌅 صباح الخير! يلا نعمل يوم تمام 💪';
+  Future<String> generateMorningGreeting({required List<String> todayTasks,
+      required List<String> todayAppointments}) async {
+    if (!_ready) return '🌅 صباح الخير!';
     try {
       final prompt = PromptConstants.MORNING_GREETING_PROMPT
           .replaceAll('{tasks}',        todayTasks.join(' • '))
@@ -528,58 +592,31 @@ class AiService {
     } catch (_) { return '🌅 صباح الخير! يلا نعمل يوم تمام 💪'; }
   }
 
-  Future<String> generateEveningSummary({
-    required List<String> pendingTasks,
-  }) async {
-    if (!_ready) return '🌙 مساء الخير! إيه أخبار يومك؟';
+  Future<String> generateEveningSummary({required List<String> pendingTasks}) async {
+    if (!_ready) return '🌙 مساء الخير!';
     try {
       final prompt = PromptConstants.EVENING_SUMMARY_PROMPT
           .replaceAll('{tasks}', pendingTasks.join(' • '));
       return await _singleShot(prompt, maxTokens: 150);
-    } catch (_) { return '🌙 مساء الخير! إيه أخبار يومك؟'; }
+    } catch (_) { return '🌙 مساء الخير!'; }
   }
 
-  Future<List<Map<String, dynamic>>> extractMemoriesFromConversation(
-      String userMsg, String reply) async {
-    if (!_ready) return [];
+  Future<String> classifyFinanceTransaction({required String description,
+      required double amount}) async {
+    if (!_ready) return 'أخرى';
     try {
-      final prompt = PromptConstants.MEMORY_EXTRACT_PROMPT
-          .replaceAll('{conversation}', 'المستخدم: $userMsg\nحماده: $reply');
-      final result = await _singleShot(prompt, maxTokens: 500, temperature: 0.1);
-      return _parseJsonList(result).cast<Map<String, dynamic>>();
-    } catch (_) { return []; }
+      final prompt = PromptConstants.FINANCE_CATEGORY_PROMPT
+          .replaceAll('{description}', description)
+          .replaceAll('{amount}',      amount.toStringAsFixed(2));
+      return await _singleShot(prompt, maxTokens: 10, temperature: 0.1);
+    } catch (_) { return 'أخرى'; }
   }
 
-  Future<String> singleShot(String prompt,
-      {int maxTokens = 200, double temperature = 0.7}) =>
-      _singleShot(prompt, maxTokens: maxTokens, temperature: temperature);
-
-  Future<String> _singleShot(String prompt, {
-    int maxTokens = 200, double temperature = 0.3,
-  }) async {
-    _rl.record();
-    final httpResponse = await http.post(
-      Uri.parse(_groqUrl),
-      headers: {
-        'Authorization': 'Bearer $_apiKey',
-        'Content-Type':  'application/json',
-      },
-      body: jsonEncode({
-        'model':       _model,
-        'messages':    [{'role': 'user', 'content': prompt}],
-        'max_tokens':  maxTokens,
-        'temperature': temperature,
-        'stream':      false,
-      }),
-    ).timeout(const Duration(seconds: 20));
-    if (httpResponse.statusCode != 200) return '';
-    final data = jsonDecode(utf8.decode(httpResponse.bodyBytes));
-    return (data['choices']?[0]?['message']?['content'] as String?)?.trim() ?? '';
-  }
+  // ─── HELPERS ──────────────────────────────────────────────
 
   Future<List<String>> _getRecentNotes() async {
     try {
-      final notes = await db.getAllNotes(limit: 5);
+      final notes = await db.getAllNotes(limit: 4);
       return notes.map((n) {
         final c = n['content'] as String;
         return (n['title'] as String?) ?? c.substring(0, c.length.clamp(0, 60));
@@ -587,140 +624,8 @@ class AiService {
     } catch (_) { return []; }
   }
 
-  Future<String> _getTodayContext() async {
-    try {
-      final now   = DateTime.now();
-      final parts = <String>[];
-
-      // Balance — monthly + cumulative total
-      try {
-        final summary = await db.getMonthSummary(now.year, now.month);
-        final income  = summary['income']  ?? 0.0;
-        final expense = summary['expense'] ?? 0.0;
-        final netMonth = income - expense;
-        final sign    = netMonth >= 0 ? '+' : '';
-        parts.add('رصيد الشهر الحالي: $sign${netMonth.toStringAsFixed(0)} ج.م'
-            ' (دخل: ${income.toStringAsFixed(0)} | مصروف: ${expense.toStringAsFixed(0)})');
-
-        // ✅ FIX C: also calculate all-time cumulative balance
-        try {
-          final sqlDb   = await db.database;
-          final allRows = await sqlDb.rawQuery(
-            "SELECT type, COALESCE(SUM(amount),0) as t FROM finance_transactions GROUP BY type"
-          );
-          double totalIncome = 0, totalExpense = 0;
-          for (final r in allRows) {
-            final t   = r['t'] as num? ?? 0;
-            if (r['type'] == 'income')  totalIncome  = t.toDouble();
-            if (r['type'] == 'expense') totalExpense = t.toDouble();
-          }
-          final cumBalance = totalIncome - totalExpense;
-          final cumSign = cumBalance >= 0 ? '+' : '';
-          parts.add('الرصيد الإجمالي (كل الوقت): $cumSign${cumBalance.toStringAsFixed(0)} ج.م');
-        } catch (_) {}
-      } catch (_) {}
-
-      // ✅ Feature 2: Budget warnings in daily context
-      try {
-        final budgets  = await db.getBudgets(now.year, now.month);
-        final catTotals = await db.getCategoryTotals(now.year, now.month);
-        for (final b in budgets) {
-          final spent = catTotals[b['category']] ?? 0.0;
-          final limit = (b['limit_amount'] as num).toDouble();
-          final pct   = limit > 0 ? (spent / limit * 100) : 0.0;
-          if (pct >= 80) {
-            parts.add('⚠️ ميزانية ${b['category']}: ${pct.toStringAsFixed(0)}%'
-                ' (${spent.toStringAsFixed(0)} من ${limit.toStringAsFixed(0)} ج.م)');
-          }
-        }
-      } catch (_) {}
-
-      // Overdue tasks
-      try {
-        final overdue = await db.getOverdueTasks();
-        if (overdue.isNotEmpty) {
-          final titles = overdue.take(3).map((t) => t['title'] as String).join(' · ');
-          parts.add('مهام متأخرة (${overdue.length}): $titles');
-        }
-      } catch (_) {}
-
-      // Today tasks
-      try {
-        final tasks = await db.getTodayTasks();
-        if (tasks.isNotEmpty) {
-          final titles = tasks.take(3).map((t) => t['title'] as String).join(' · ');
-          parts.add('مهام اليوم: $titles');
-        }
-      } catch (_) {}
-
-      // Upcoming appointments
-      try {
-        final appts = await db.getUpcomingAppointments(withinDays: 2);
-        if (appts.isNotEmpty) {
-          final titles = appts.take(3).map((a) {
-            final ts = a['start_time'] as int?;
-            final timeStr = ts != null
-                ? '${DateTime.fromMillisecondsSinceEpoch(ts).hour}:'
-                  '${DateTime.fromMillisecondsSinceEpoch(ts).minute.toString().padLeft(2,'0')}'
-                : '';
-            return '${a['title']}${timeStr.isNotEmpty ? " ($timeStr)" : ""}';
-          }).join(' · ');
-          parts.add('مواعيد قريبة: $titles');
-        }
-      } catch (_) {}
-
-      // ✅ Feature 4: Upcoming birthdays
-      try {
-        final upcoming = await db.getUpcomingBirthdays(withinDays: 3);
-        if (upcoming.isNotEmpty) {
-          final names = upcoming.map((r) {
-            final days = r['days_until'] as int;
-            return days == 0
-                ? '${r['name']} (اليوم 🎂)'
-                : '${r['name']} (بعد $days يوم)';
-          }).join(', ');
-          parts.add('🎂 أعياد ميلاد قريبة: $names');
-        }
-      } catch (_) {}
-
-      return parts.isEmpty ? '' : parts.join('\n');
-    } catch (_) { return ''; }
-  }
-
-  void _extractMemoriesAsync(String user, String reply, {required String sessionId}) {
-    Future.microtask(() async {
-      try {
-        final extracted = await extractMemoriesFromConversation(user, reply);
-        for (final m in extracted) {
-          final content = (m['content'] as String?)?.trim() ?? '';
-          if (content.isEmpty) continue;
-          // ✅ IMPROVEMENT 3: update similar memory instead of duplicate
-          await memoryService.updateOrSaveMemory(
-            content:     content,
-            type:        m['type']        as String? ?? 'note',
-            importance:  (m['importance'] as num?)?.toInt() ?? 5,
-            sourceMsgId: sessionId,
-          );
-        }
-      } catch (_) {}
-    });
-  }
-
-  List<dynamic> _parseJsonList(String raw) {
-    try {
-      final clean = raw.replaceAll('```json', '').replaceAll('```', '').trim();
-      final s = clean.indexOf('[');
-      final e = clean.lastIndexOf(']');
-      if (s == -1 || e <= s) return [];
-      final decoded = jsonDecode(clean.substring(s, e + 1));
-      return decoded is List ? decoded : [];
-    } catch (_) { return []; }
-  }
-
   void _checkRateLimit() {
-    if (!_rl.canSend()) {
-      throw Exception('انت بتبعت رسايل بسرعة كبيرة — استنى ثانية 🐢');
-    }
+    if (!_rl.canSend()) throw Exception('انت بتبعت رسايل بسرعة — استنى ثانية 🐢');
   }
 
   Future<void> dispose() async {}
