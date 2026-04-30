@@ -134,6 +134,21 @@ class AiService {
   Future<bool> setApiKey(String key) async {
     if (key.isEmpty || key.length < 20) return false;
     try {
+      // Test the key with a minimal request first
+      final testResp = await http.post(
+        Uri.parse('$_geminiUrl?key=$key'),
+        headers: {'Content-Type': 'application/json'},
+        body: '{"contents":[{"role":"user","parts":[{"text":"hi"}]}],'
+              '"generationConfig":{"maxOutputTokens":5}}',
+      ).timeout(const Duration(seconds: 10));
+
+      // Accept 200 only — reject anything else
+      if (testResp.statusCode != 200) {
+        final body = utf8.decode(testResp.bodyBytes);
+        _log.w('Key test failed: ${testResp.statusCode} ${body.substring(0, body.length.clamp(0, 200))}');
+        return false;
+      }
+
       final sqlDb = await db.database;
       await sqlDb.insert('app_settings', {'key': _kApiKey, 'value': key},
           conflictAlgorithm: ConflictAlgorithm.replace);
@@ -141,7 +156,10 @@ class AiService {
       _ready  = true;
       aiReadyNotifier.value = true;
       return true;
-    } catch (_) { return false; }
+    } catch (e) {
+      _log.w('setApiKey error: $e');
+      return false;
+    }
   }
 
   Future<void> clearApiKey() async {
@@ -243,7 +261,12 @@ class AiService {
         }),
       ).timeout(const Duration(seconds: 30));
 
-      _handleHttpError(httpResponse.statusCode);
+      if (httpResponse.statusCode != 200) {
+        _handleHttpError(
+          httpResponse.statusCode,
+          body: utf8.decode(httpResponse.bodyBytes),
+        );
+      }
 
       final data  = jsonDecode(utf8.decode(httpResponse.bodyBytes));
       final raw   = (data['candidates']?[0]?['content']?['parts']?[0]?['text']
@@ -279,13 +302,34 @@ class AiService {
     }
   }
 
-  void _handleHttpError(int code) {
+  void _handleHttpError(int code, {String? body}) {
     switch (code) {
-      case 400: throw Exception('طلب غلط — تأكد من الـ key وجرّب تاني');
-      case 403: throw Exception('API key غلط أو انتهت صلاحيته — روح الإعدادات 🔑');
-      case 429: throw Exception('وصلت للحد اليومي المجاني — جرّب بكرة 🌙');
+      case 400:
+        // Could be invalid key format or bad request
+        final hint = (body?.contains('API_KEY_INVALID') == true ||
+                      body?.contains('invalid') == true)
+            ? 'الـ API key غلط — تأكد إنه صح من aistudio.google.com 🔑'
+            : 'خطأ في الطلب (400) — تأكد من الـ key 🔑';
+        throw Exception(hint);
+      case 401:
+        throw Exception('API key غلط — روح الإعدادات وتأكد منه 🔑');
+      case 403:
+        // Most common: key not enabled for Gemini API
+        throw Exception(
+          'الـ API key مش مفعّل لـ Gemini\n'
+          'روح aistudio.google.com وتأكد إن الـ key شغال 🔑'
+        );
+      case 429:
+        // Could be per-minute rate limit OR daily quota
+        final isQuota = body?.contains('quota') == true ||
+                        body?.contains('RESOURCE_EXHAUSTED') == true;
+        throw Exception(isQuota
+            ? 'انتهى الحد اليومي المجاني — جرّب بكرة 🌙'
+            : 'كثير أوي في وقت قصير — استنى ثانية وجرّب 🐢');
       case 200: return;
-      default:  throw Exception('خطأ ($code) — جرّب تاني');
+      default:
+        _log.w('Gemini HTTP $code: ${body?.substring(0, (body?.length ?? 0).clamp(0, 200))}');
+        throw Exception('خطأ ($code) — جرّب تاني');
     }
   }
 
